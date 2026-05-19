@@ -1,0 +1,27 @@
+# CODEOWNERS — ERP-INFRA
+#
+# Cada padrão de arquivo lista os GitHub handles (ou teams) que automaticamente
+# viram reviewers obrigatorios de PRs que tocam aqueles arquivos.
+#
+# Sintaxe: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# >>> TIME DE INFRA: substituam os placeholders @TODO-* pelos seus handles
+# >>> ou pelo time `@ERP-Bem-Comum/infra` apos criar o time na org.
+
+# Default — qualquer arquivo nao coberto por uma regra mais especifica
+*                          @GabrielAderaldo
+
+# IaC real (Terraform / Helm / Pulumi / ...) — somente infra
+/platform/                 @GabrielAderaldo @TODO-infra-lead
+
+# Specs e diagramas — dev senior + infra
+/docs/                     @GabrielAderaldo @TODO-infra-lead
+
+# Decisoes arquiteturais — devem passar por dev senior + infra lead
+/docs/adr/                 @GabrielAderaldo @TODO-infra-lead
+
+# Compose e scripts locais — devs
+/local/                    @GabrielAderaldo
+
+# Workflows da org neste repo — bloqueia para nao quebrar gate
+/.github/workflows/        @GabrielAderaldo

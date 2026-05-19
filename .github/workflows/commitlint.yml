@@ -1,0 +1,14 @@
+name: Commitlint
+
+# Consome o reusable workflow centralizado na organizacao.
+# Para alterar regras de Conventional Commits, edite:
+# https://github.com/ERP-Bem-Comum/.github/blob/main/.github/workflows/commitlint.yml
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+jobs:
+  commitlint:
+    uses: ERP-Bem-Comum/.github/.github/workflows/commitlint.yml@main

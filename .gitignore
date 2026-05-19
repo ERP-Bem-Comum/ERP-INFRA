@@ -1,0 +1,51 @@
+# Local environment overrides
+local/.env
+.env
+.env.local
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Terraform — quando preenchido em platform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Pulumi
+**/Pulumi.*.yaml
+
+# Helm
+**/charts/*.tgz
+
+# Logs e dumps
+*.log
+*.sql.gz
+*.dump
+dumps/
+
+# Node — caso scripts node entrem
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python — caso scripts python entrem
+__pycache__/
+*.py[cod]
+.venv/
+venv/

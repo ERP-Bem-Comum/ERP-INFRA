@@ -1,0 +1,32 @@
+[← Voltar para raiz](../README.md)
+
+# 📐 docs/
+
+Esta pasta é a **especificação técnica viva** da infraestrutura do ERP Bem Comum.
+
+| Arquivo | Função | Audiência |
+|---|---|---|
+| [`topology.md`](topology.md) | Diagrama Mermaid de componentes e fluxos | Dev + Infra |
+| [`environments.md`](environments.md) | dev / staging / prod — diferenças e promoção | Dev + Infra |
+| [`secrets.md`](secrets.md) | Catálogo de secrets esperados | Dev + Infra + Security |
+| [`observability.md`](observability.md) | Logs, métricas, tracing, alertas baseline | Dev + Infra + Oncall |
+| [`adr/`](adr/) | Decisões arquiteturais específicas deste repo | Todos |
+
+## Status dos documentos
+
+Cada documento abre com um cabeçalho **Status** que indica:
+
+- 🔵 **PLANEJADA** — reflete a decisão do handbook, ainda não validada contra infra real
+- 🟢 **VIGENTE** — confirmada que reflete a infra real provisionada
+- 🟡 **DIVERGENTE** — sabidamente diferente do que está em prod (PR em andamento)
+- 🔴 **DESATUALIZADA** — divergência conhecida sem PR; precisa correção urgente
+
+> **Time de Infra**: por favor mantenham esses status atualizados. Documentos sem status presumem-se 🔵.
+
+## Como contribuir com docs
+
+Veja [`../CONTRIBUTING.md`](../CONTRIBUTING.md). Resumo:
+
+- PRs em `docs/` precisam de **1 dev sênior + 1 do time de infra**
+- ADRs precisam de **2 reviewers** (dev sênior + líder de infra)
+- Squash merge; título do PR vira a mensagem final em Conventional Commits

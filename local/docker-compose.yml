@@ -1,0 +1,125 @@
+# ============================================================================
+# Docker Compose para desenvolvimento local — ERP Bem Comum
+# ----------------------------------------------------------------------------
+# Sobe o conjunto MINIMO que um dev precisa para trabalhar no projeto:
+#   - MySQL 8.4 com os 2 databases isolados (legacy, core) e 3 usuarios
+#   - phpMyAdmin opcional (perfil `tools`) para inspecao visual
+#
+# Os SERVICOS de aplicacao (bff-gateway, legacy-api, core-api) NAO sobem aqui.
+# Eles ficam comentados como TEMPLATE — descomentar quando os repos dos
+# respectivos servicos publicarem imagens. Cada repo de servico tem seu
+# proprio compose para desenvolvimento focado.
+#
+# Uso:
+#   cp .env.example .env
+#   docker compose up -d              # so o MySQL
+#   docker compose --profile tools up -d   # MySQL + phpMyAdmin
+#   docker compose logs -f mysql
+#   docker compose down               # mantem volumes
+#   docker compose down -v            # remove volumes (RESET)
+# ============================================================================
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: erp-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Charset/collation conforme handbook (ADR-0014):
+      # utf8mb4 + utf8mb4_unicode_ci eh inegociavel.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=caching_sha2_password
+      - --log-bin=binlog
+      - --binlog-format=ROW
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - erp-net
+
+  # phpMyAdmin — opcional. Suba com: docker compose --profile tools up -d
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: erp-phpmyadmin
+    profiles: ["tools"]
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 256M
+    ports:
+      - "${PMA_PORT:-8080}:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - erp-net
+
+  # ===========================================================================
+  # TEMPLATE — Descomentar quando o servico tiver imagem publicada.
+  # ===========================================================================
+  #
+  # bff-gateway:
+  #   image: ghcr.io/erp-bem-comum/bff-gateway:dev
+  #   container_name: erp-bff
+  #   restart: unless-stopped
+  #   environment:
+  #     PORT: 8080
+  #     LEGACY_API_URL: http://legacy-api:3000
+  #     CORE_API_URL: http://core-api:3000
+  #     JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+  #     SESSION_SECRET: ${SESSION_SECRET}
+  #   ports:
+  #     - "${BFF_PORT:-8080}:8080"
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #   networks:
+  #     - erp-net
+  #
+  # legacy-api:
+  #   image: ghcr.io/erp-bem-comum/legacy-api:dev
+  #   container_name: erp-legacy
+  #   restart: unless-stopped
+  #   environment:
+  #     PORT: 3000
+  #     DATABASE_URL_LEGACY: ${DATABASE_URL_LEGACY}
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #   networks:
+  #     - erp-net
+  #
+  # core-api:
+  #   image: ghcr.io/erp-bem-comum/core-api:dev
+  #   container_name: erp-core
+  #   restart: unless-stopped
+  #   environment:
+  #     PORT: 3000
+  #     DATABASE_URL_CORE: ${DATABASE_URL_CORE}
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #   networks:
+  #     - erp-net
+
+volumes:
+  mysql-data:
+    name: erp-mysql-data
+
+networks:
+  erp-net:
+    name: erp-net
+    driver: bridge
