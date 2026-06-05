@@ -2,7 +2,7 @@
 
 # 🏗️ Topologia do Sistema
 
-> **Status:** PLANEJADA — esta é a topologia decidida em ADRs do handbook. Confirmar com o time de infra se a infra REAL provisionada já reflete este desenho. Atualizar quando divergir.
+> **Status:** PLANEJADA (alvo de produção) — esta é a topologia decidida em ADRs do handbook. Descreve o **alvo de produção**, não o que sobe no dev local (isso fica em [`../local/README.md`](../local/README.md)). Confirmar com o time de infra se a infra REAL provisionada já reflete este desenho. Atualizar quando divergir.
 >
 > **Fontes-fonte da decisão:** [handbook architecture/02-system-topology.md](https://github.com/ERP-Bem-Comum) e [handbook infrastructure/01-infra-handoff.md](https://github.com/ERP-Bem-Comum).
 
@@ -17,34 +17,32 @@ flowchart TB
 
     subgraph PUB["Camada pública (única exposição externa)"]
         LB["⚖️ Load Balancer<br/>TLS + WAF (regras OWASP)"]
-        BFF["🚪 bff-gateway<br/>Node 20 · Hono/Fastify<br/>Stateless · ≥2 réplicas<br/>256 MB / 0.25 vCPU"]
-        LB --> BFF
+        WEB["🚪 web-app<br/>TanStack Start (Node 24 · Nitro)<br/>Front (SSR) + BFF no mesmo processo<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
+        LB --> WEB
     end
 
-    BFF -- "/api/v1/*" --> LEGACY
-    BFF -- "/api/v2/*" --> CORE
+    WEB -- "server functions (BFF)<br/>/api/v2/* via HTTP interno" --> CORE
 
     subgraph INT["Camada interna (VPC privada)"]
-        direction LR
-        LEGACY["📜 legacy-api<br/>NestJS · existente<br/>Stateless · ≥2 réplicas"]
         CORE["⭐ core-api<br/>Node 24 LTS · Fastify<br/>Modular Monolith<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
-        LEGACY -.-> |"eventos via outbox"| CORE
-        CORE -.-> |"eventos via outbox"| LEGACY
     end
 
-    LEGACY --> DB
     CORE --> DB
+    CORE --> OBJ
+    MIG["📦 job de importação<br/>(one-shot / batch)<br/>carrega dump do ERP antigo"] --> DB
 
     subgraph DBLAYER["MySQL 8.4 LTS managed (RDS / Cloud SQL) · Multi-AZ · PITR"]
         direction LR
         DB[(MySQL 8.4)]
-        LEGACYDB[("database legacy<br/>user: legacy_app<br/>GRANT em legacy.*")]
         COREDB[("database core<br/>user: core_app<br/>GRANT em core.*")]
+        LEGACYDB[("database legacy<br/>dados importados do ERP antigo<br/>sem serviço em runtime")]
         BIDB[("read-only BI<br/>user: readonly_bi<br/>SELECT em ambos")]
-        DB --- LEGACYDB
         DB --- COREDB
+        DB --- LEGACYDB
         DB --- BIDB
     end
+
+    OBJ[("🗄️ Object Storage<br/>S3-compatible<br/>(MinIO em dev · S3/GCS em prod)")]
 
     CORE -- "egress whitelist" --> VAN["🏦 VAN Bradesco<br/>(CNAB / OFX)"]
     CORE -- "egress whitelist" --> OCR["📄 Provider OCR<br/>(futuro)"]
@@ -53,20 +51,24 @@ flowchart TB
     classDef public fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef internal fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef storage fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef batch fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
 
     class Internet,VAN,OCR external
-    class LB,BFF public
-    class LEGACY,CORE internal
-    class DB,LEGACYDB,COREDB,BIDB storage
+    class LB,WEB public
+    class CORE internal
+    class DB,COREDB,LEGACYDB,BIDB,OBJ storage
+    class MIG batch
 ```
 
 ### Princípios invioláveis
 
-1. **BFF nunca toca em DB.** Ele só conhece HTTP.
-2. **Cada serviço escreve só no próprio database.** `core-api` em `core.*`, `legacy-api` em `legacy.*`. Sem exceções.
-3. **Toda comunicação cross-BC é via evento (outbox).** Sem chamada HTTP síncrona entre `legacy-api` e `core-api`.
-4. **Sem joins cross-database entre serviços.** Se precisa de dado do outro, lê via API ou via projeção mantida no próprio database.
-5. **Falha de um serviço não derruba o outro.** Eventos ficam empilhados na outbox até voltar.
+1. **O BFF (web-app, server-side) nunca toca em DB.** Ele só conhece HTTP: serve o front (SSR) e, via server functions, chama o `core-api`. O browser nunca fala com o `core-api` direto.
+2. **Só o `core-api` escreve em runtime, e só no database `core`.** O database `legacy` guarda os dados importados do ERP antigo; **nenhum serviço o serve via API em runtime** — é fonte histórica / BI, populada por job de importação.
+3. **Isolamento por GRANT de usuário é inegociável.** `core_app` só enxerga `core.*`; `readonly_bi` só faz `SELECT`. O carregamento de `legacy.*` usa um usuário de importação dedicado, ativo **apenas** durante a migração.
+4. **Sem joins cross-database em runtime.** Se o `core-api` precisa de dado do legado, lê via projeção mantida no próprio `core.*` (materializada na importação), nunca com `JOIN legacy.x`.
+5. **Comunicação com sistemas externos é via outbox.** Efeitos colaterais para fora (VAN/CNAB, OCR) saem por entrega assíncrona confiável (outbox + worker), não no caminho síncrono da request.
+
+> 📌 **Mudança vs. desenho anterior:** não há mais `bff-gateway` como serviço separado (o BFF é o próprio `web-app`/TanStack Start) nem `legacy-api` rodando (o legado é o frontend congelado `web-app-legacy` + os **dados** importados no database `legacy`). O outbox deixou de ser canal cross-BC `legacy ↔ core` e passou a ser o canal de **egress** do `core-api` para sistemas externos.
 
 ---
 
@@ -77,53 +79,53 @@ sequenceDiagram
     autonumber
     participant B as Browser
     participant LB as Load Balancer
-    participant BFF as bff-gateway
+    participant WEB as web-app (BFF/SSR)
     participant CORE as core-api
     participant DB as MySQL (core)
 
-    B->>LB: GET /api/v2/documentos/123
-    LB->>BFF: GET /api/v2/documentos/123<br/>(TLS terminated)
-    BFF->>BFF: auth, rate limit, X-Request-Id
-    BFF->>CORE: GET /api/v2/documentos/123
+    B->>LB: GET /documentos/123 (navegação)
+    LB->>WEB: GET /documentos/123<br/>(TLS terminated)
+    WEB->>WEB: auth de sessão, rate limit, X-Request-Id
+    WEB->>CORE: GET /api/v2/documentos/123<br/>(server function → HTTP interno)
     CORE->>DB: SELECT FROM core.documentos<br/>WHERE id = 123
     DB-->>CORE: row
-    CORE-->>BFF: 200 JSON
-    BFF-->>LB: 200 JSON
-    LB-->>B: 200 JSON
+    CORE-->>WEB: 200 JSON
+    WEB-->>LB: 200 HTML/JSON (SSR ou fetch do cliente)
+    LB-->>B: 200
 ```
 
 ---
 
-## 3. Fluxo: escrita com efeito cross-bounded-context
+## 3. Fluxo: escrita com efeito em sistema externo (egress confiável)
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant B as Browser
-    participant BFF as bff-gateway
+    participant WEB as web-app (BFF)
     participant CORE as core-api
     participant CDB as MySQL (core)
     participant W as Outbox Worker
-    participant LEG as legacy-api
-    participant LDB as MySQL (legacy)
+    participant VAN as VAN Bradesco
 
-    B->>BFF: POST /api/v2/cnab/remessa
-    BFF->>CORE: POST /api/v2/cnab/remessa
+    B->>WEB: POST /cnab/remessa
+    WEB->>CORE: POST /api/v2/cnab/remessa<br/>(server function)
     CORE->>CDB: BEGIN TRANSACTION
     CORE->>CDB: INSERT INTO core.remessa_cnab
     CORE->>CDB: INSERT INTO core.outbox<br/>(event_type='RemessaCnabGerada')
     CORE->>CDB: COMMIT
-    CORE-->>BFF: 201 Created
-    BFF-->>B: 201 Created
+    CORE-->>WEB: 201 Created
+    WEB-->>B: 201 Created
 
     Note over W: assíncrono
     W->>CDB: SELECT outbox WHERE processed_at IS NULL
     CDB-->>W: evento RemessaCnabGerada
-    W->>LEG: deliver event
-    LEG->>LDB: reage no próprio legacy.*
-    LEG-->>W: ACK
+    W->>VAN: entrega (CNAB / OFX, egress whitelist)
+    VAN-->>W: ACK
     W->>CDB: UPDATE outbox SET processed_at=NOW()
 ```
+
+> O outbox garante que o efeito externo acontece **exatamente uma vez** mesmo se a VAN estiver fora: o evento fica empilhado até a entrega confirmar. A request do usuário não espera o egress.
 
 ---
 
@@ -134,27 +136,27 @@ flowchart LR
     subgraph MYSQL["MySQL 8.4 LTS · Multi-AZ · PITR · binlog"]
         direction TB
 
-        subgraph LEGACY_DB[database: legacy]
-            T1[tabelas legacy<br/>(carga inicial do dump)]
-        end
-
         subgraph CORE_DB[database: core]
             T2[tabelas fin_*<br/>módulo Financeiro]
             T3[tabelas ctr_*<br/>módulo Contratos]
-            T4[tabela outbox]
+            T4[tabela outbox<br/>egress para sistemas externos]
+        end
+
+        subgraph LEGACY_DB[database: legacy]
+            T1[tabelas legacy<br/>carga do dump do ERP antigo<br/>histórico / BI — sem serviço em runtime]
         end
     end
 
-    UAPP1["user: legacy_app<br/>GRANT ALL ON legacy.*"] --> LEGACY_DB
     UAPP2["user: core_app<br/>GRANT ALL ON core.*"] --> CORE_DB
-    UBI["user: readonly_bi<br/>SELECT em ambos"] --> LEGACY_DB
-    UBI --> CORE_DB
+    UMIG["user: legacy_loader<br/>GRANT ALL ON legacy.*<br/>(ativo só na importação)"] --> LEGACY_DB
+    UBI["user: readonly_bi<br/>SELECT em ambos"] --> CORE_DB
+    UBI --> LEGACY_DB
 
     classDef user fill:#e0e7ff,stroke:#4f46e5,color:#312e81
-    class UAPP1,UAPP2,UBI user
+    class UAPP2,UMIG,UBI user
 ```
 
-> ⚠️ **O isolamento por GRANT de usuário é a única coisa que impede um dev de violar a regra de domínio. Não negocie.** O sistema operacional não tem como detectar `JOIN legacy.x` em queries do `core-api` — só o MySQL, via permissão negada.
+> ⚠️ **O isolamento por GRANT de usuário é a única coisa que impede um dev/serviço de violar a regra de domínio. Não negocie.** O `core-api` se conecta como `core_app` e, por permissão negada do MySQL, **não consegue** tocar em `legacy.*` — nem por engano, nem de propósito. O acesso de leitura ao legado (BI, conferência de migração) passa por `readonly_bi`.
 
 Detalhes em [handbook architecture/03-data-architecture.md](https://github.com/ERP-Bem-Comum) e ADR-0014.
 
@@ -164,9 +166,9 @@ Detalhes em [handbook architecture/03-data-architecture.md](https://github.com/E
 
 | Origem | Destino | Porta | Propósito | Status |
 |---|---|---|---|---|
-| `core-api` | VAN Bradesco | a confirmar | CNAB / OFX | 🔵 planejado |
+| `core-api` | VAN Bradesco | a confirmar | CNAB / OFX (via outbox) | 🔵 planejado |
 | `core-api` | Provider OCR | a definir | Processamento de documentos | 🔵 planejado (provedor a contratar) |
-| `legacy-api` | (o que já consome hoje) | — | Manter funcionamento legado | 🔵 herdado |
+| `core-api` | Object Storage (S3-compat) | 443 | Anexos / documentos | 🔵 planejado (MinIO em dev) |
 | Todos | Secrets Manager | 443 | Leitura de credenciais | 🔵 planejado |
 | Todos | Coletor de logs/métricas | 443 | Observabilidade | 🔵 planejado |
 

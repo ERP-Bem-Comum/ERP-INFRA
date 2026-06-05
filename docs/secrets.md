@@ -27,7 +27,7 @@ Critério para escolha: integração com o cloud provider escolhido + suporte a 
 
 | Nome do slot | Propósito | Quem lê | Rotação |
 |---|---|---|---|
-| `DATABASE_URL_LEGACY` | Conexão `legacy-api` ao database `legacy` (user `legacy_app`) | `legacy-api` | trimestral |
+| `DATABASE_URL_LEGACY` | Conexão ao database `legacy` (user `legacy_loader`) — usada **só** pelo job de importação do ERP antigo, não há serviço em runtime | job de importação | trimestral |
 | `DATABASE_URL_CORE` | Conexão `core-api` ao database `core` (user `core_app`) | `core-api` | trimestral |
 | `DATABASE_URL_READONLY` | Conexão read-only (user `readonly_bi`) para BI/analytics | BI / ferramentas analytics | semestral |
 
@@ -48,10 +48,10 @@ Formato esperado: `mysql://user:password@host:3306/database?ssl-mode=REQUIRED`
 
 | Nome do slot | Propósito | Quem lê | Rotação |
 |---|---|---|---|
-| `JWT_SIGNING_KEY` | Chave para assinar JWTs | `bff-gateway` | trimestral |
-| `SESSION_SECRET` | Chave para HMAC de sessões | `bff-gateway` | trimestral |
-| `OIDC_CLIENT_ID` | Cliente OIDC (Zitadel ou equivalente) | `bff-gateway` | conforme IdP |
-| `OIDC_CLIENT_SECRET` | Secret correspondente | `bff-gateway` | trimestral |
+| `JWT_SIGNING_KEY` | Chave para assinar JWTs | `web-app` (BFF) · `core-api` | trimestral |
+| `SESSION_SECRET` | Chave para HMAC de sessões | `web-app` (BFF) | trimestral |
+| `OIDC_CLIENT_ID` | Cliente OIDC (Zitadel ou equivalente) | `web-app` (BFF) | conforme IdP |
+| `OIDC_CLIENT_SECRET` | Secret correspondente | `web-app` (BFF) | trimestral |
 
 ### 2.4. Integrações externas (futuras)
 
@@ -87,18 +87,20 @@ Formato esperado: `mysql://user:password@host:3306/database?ssl-mode=REQUIRED`
 
 ```mermaid
 flowchart LR
-    SM["🔐 Secrets Manager<br/>(escolha do infra)"] -->|"fetch on startup<br/>via IAM/service account"| BFF
-    SM --> LEGACY
+    SM["🔐 Secrets Manager<br/>(escolha do infra)"] -->|"fetch on startup<br/>via IAM/service account"| WEB
     SM --> CORE
+    SM -.->|"só durante a importação"| MIG
 
-    BFF["bff-gateway<br/>(env vars em runtime)"]
-    LEGACY["legacy-api<br/>(env vars em runtime)"]
+    WEB["web-app / BFF<br/>(env vars em runtime)"]
     CORE["core-api<br/>(env vars em runtime)"]
+    MIG["job de importação<br/>(DATABASE_URL_LEGACY)"]
 
     classDef sm fill:#fde68a,stroke:#d97706,color:#78350f
     classDef svc fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef batch fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
     class SM sm
-    class BFF,LEGACY,CORE svc
+    class WEB,CORE svc
+    class MIG batch
 ```
 
 Padrões aceitáveis:

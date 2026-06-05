@@ -48,7 +48,7 @@ flowchart TB
 - Campos mínimos:
   - `timestamp` (ISO 8601 com timezone)
   - `level` (`debug`/`info`/`warn`/`error`/`fatal`)
-  - `service` (`bff-gateway`/`legacy-api`/`core-api`)
+  - `service` (`web-app`/`core-api`)
   - `request_id` (correlação)
   - `message` (texto humano)
   - Campos contextuais (`user_id`, `tenant_id`, `operation`, etc.)
@@ -113,12 +113,12 @@ http_request_duration_seconds_bucket{method="GET",route="/api/v2/documentos",sta
   - dev: 100%
   - staging: 100%
   - prod: 10% (configurável; pode subir temporariamente para investigação)
-- **Propagação de contexto** via header `traceparent` (W3C Trace Context) — `bff-gateway` injeta, demais serviços propagam
+- **Propagação de contexto** via header `traceparent` (W3C Trace Context) — o `web-app` (BFF) injeta, o `core-api` propaga
 
 ### Spans mínimos
 
-- HTTP request (root span no `bff-gateway`)
-- Cada chamada inter-serviço (BFF → legacy/core)
+- HTTP request (root span no `web-app`/BFF)
+- Cada chamada inter-serviço (BFF → core-api)
 - Cada query SQL (com tabela e operação, **sem valores**)
 - Cada chamada externa (Bradesco, OCR, ...)
 - Cada item de outbox processado pelo worker
