@@ -1,34 +1,57 @@
 # ============================================================================
-# Docker Compose para desenvolvimento local — ERP Bem Comum
+# Docker Compose — desenvolvimento local — ERP Bem Comum (BASE PÚBLICA)
 # ----------------------------------------------------------------------------
-# Sobe o conjunto MINIMO que um dev precisa para trabalhar no projeto:
-#   - MySQL 8.4 com os 2 databases isolados (legacy, core) e 3 usuarios
-#   - phpMyAdmin opcional (perfil `tools`) para inspecao visual
+# Este arquivo é AUTOSSUFICIENTE: sobe sozinho num clone limpo do ERP-INFRA,
+# sem depender de nenhuma pasta-irmã. É a promessa do ADR-0001 ("clone e suba
+# em < 5 min"). Por isso NÃO usa `include` de outro repo.
 #
-# Os SERVICOS de aplicacao (bff-gateway, legacy-api, core-api) NAO sobem aqui.
-# Eles ficam comentados como TEMPLATE — descomentar quando os repos dos
-# respectivos servicos publicarem imagens. Cada repo de servico tem seu
-# proprio compose para desenvolvimento focado.
+#   O que sobe por padrão (a CAMADA DE DADOS):
+#     - mysql 8.4 ........ databases isolados `core` + `legacy`, 3 usuários/GRANT
+#     - minio + bootstrap  storage S3-compatível (bucket contracts-documents)
+#   Opt-in (`--profile tools`):
+#     - phpmyadmin ....... inspeção visual do banco
 #
-# Uso:
-#   cp .env.example .env
-#   docker compose up -d              # so o MySQL
-#   docker compose --profile tools up -d   # MySQL + phpMyAdmin
-#   docker compose logs -f mysql
-#   docker compose down               # mantem volumes
-#   docker compose down -v            # remove volumes (RESET)
+#   Os serviços de APLICAÇÃO (core-api, web, caddy) ficam como TEMPLATE
+#   comentado no fim deste arquivo. Eles sobem de dois jeitos:
+#     a) Imagem publicada (ghcr.io/erp-bem-comum/*) — descomentar quando o CI
+#        publicar as imagens (repo público, sem precisar do código-fonte).
+#     b) Build de pasta-irmã — DENTRO do mono_repo, via `docker-compose.override.yml`
+#        (git-ignored), que o `docker compose` mescla automaticamente. Esse é o
+#        fluxo do mantenedor com o mono_repo no disco; ver `up.sh`.
+#
+#   Uso:
+#     cp .env.example .env
+#     docker compose up -d --wait                 # camada de dados
+#     docker compose --profile tools up -d        # + phpMyAdmin
+#     docker compose logs -f mysql
+#     docker compose down                         # mantém volumes
+#     docker compose down -v                      # zera volumes (RESET)
 # ============================================================================
 
+name: bemcomum
+
 services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # MySQL 8.4 — engine de persistência. Databases `core` + `legacy` isolados.
+  # O isolamento por GRANT (ver mysql/init.sql) é a única defesa contra um dev
+  # violar a fronteira de domínio. Charset/flags alinhados ao core-api/compose.
+  #
+  # Senhas: TRIVIAIS por design (dev local efêmero). Root vem do .env; os 3
+  # usuários de aplicação são criados pelo init.sql. Nada de SOPS aqui — senha
+  # trivial pública não é segredo (ver .env.example e mysql/init.sql).
+  #
+  # Digest pin (ADR-0011 do backend): espelha core-api/compose.yaml. Para
+  # atualizar: docker buildx imagetools inspect mysql:8.4 --format '{{.Manifest.Digest}}'
+  # ──────────────────────────────────────────────────────────────────────────
   mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:c36050afdca850f23cef85703f84c7531a5ae155a11b5ee1c60acb09937c4084
     container_name: erp-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      # Charset/collation conforme handbook (ADR-0014):
-      # utf8mb4 + utf8mb4_unicode_ci eh inegociavel.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_local_dev_only}
     command:
+      # utf8mb4 + utf8mb4_unicode_ci é inegociável (ADR-0014). binlog/GTID
+      # espelham a config de produção para flagrar bugs de replicação cedo.
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --default-authentication-plugin=caching_sha2_password
@@ -42,11 +65,61 @@ services:
       - mysql-data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root_local_dev_only}"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - erp-net
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # MinIO — equivalente local do AWS S3 (ADR-0019 do backend). Storage de
+  # documentos/anexos. Digest pin espelha core-api/compose.yaml.
+  # ──────────────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: erp-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dev-access-key}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dev-secret-key-min-8-chars}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - erp-net
+
+  # One-shot idempotente: cria o bucket de documentos quando o MinIO fica healthy.
+  minio-bootstrap:
+    image: minio/mc:latest
+    container_name: erp-minio-bootstrap
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-dev-access-key} ${MINIO_ROOT_PASSWORD:-dev-secret-key-min-8-chars};
+      mc mb --ignore-existing local/contracts-documents;
+      mc version enable local/contracts-documents;
+      mc anonymous set download local/contracts-documents;
+      echo 'Bootstrap concluído: bucket contracts-documents pronto.';
+      "
+    restart: "no"
     networks:
       - erp-net
 
@@ -68,56 +141,66 @@ services:
       - erp-net
 
   # ===========================================================================
-  # TEMPLATE — Descomentar quando o servico tiver imagem publicada.
+  # TEMPLATE — serviços de APLICAÇÃO. Mantidos comentados na base pública para
+  # `docker compose config` continuar válido num clone sem as imagens/o código.
+  #
+  # No mono_repo: NÃO descomente aqui — o `docker-compose.override.yml`
+  # (git-ignored) já define estes serviços com `build:` de pasta-irmã. Rode
+  # `./up.sh`.
+  #
+  # No repo público: descomente quando o CI publicar ghcr.io/erp-bem-comum/*.
   # ===========================================================================
   #
-  # bff-gateway:
-  #   image: ghcr.io/erp-bem-comum/bff-gateway:dev
-  #   container_name: erp-bff
-  #   restart: unless-stopped
-  #   environment:
-  #     PORT: 8080
-  #     LEGACY_API_URL: http://legacy-api:3000
-  #     CORE_API_URL: http://core-api:3000
-  #     JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
-  #     SESSION_SECRET: ${SESSION_SECRET}
-  #   ports:
-  #     - "${BFF_PORT:-8080}:8080"
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
-  #   networks:
-  #     - erp-net
-  #
-  # legacy-api:
-  #   image: ghcr.io/erp-bem-comum/legacy-api:dev
-  #   container_name: erp-legacy
-  #   restart: unless-stopped
-  #   environment:
-  #     PORT: 3000
-  #     DATABASE_URL_LEGACY: ${DATABASE_URL_LEGACY}
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
-  #   networks:
-  #     - erp-net
-  #
   # core-api:
-  #   image: ghcr.io/erp-bem-comum/core-api:dev
-  #   container_name: erp-core
+  #   image: ghcr.io/erp-bem-comum/core-api:${CORE_API_TAG:-dev}
+  #   container_name: erp-core-api
   #   restart: unless-stopped
+  #   # O backend, sozinho, roda como CLI; aqui o entrypoint sobe o servidor HTTP.
+  #   entrypoint: ["/bin/sh", "-c", "exec tini -- node src/server.ts"]
   #   environment:
-  #     PORT: 3000
-  #     DATABASE_URL_CORE: ${DATABASE_URL_CORE}
+  #     PORT: "3000"
+  #     HOST: 0.0.0.0
+  #     AUTH_DRIVER: mysql
+  #     AUTH_DATABASE_URL: ${DATABASE_URL_CORE:-mysql://core_app:core_local_dev_only@mysql:3306/core}
   #   depends_on:
   #     mysql:
   #       condition: service_healthy
-  #   networks:
-  #     - erp-net
+  #   networks: [erp-net]
+  #
+  # web:
+  #   image: ghcr.io/erp-bem-comum/web:${WEB_TAG:-dev}
+  #   container_name: erp-web
+  #   restart: unless-stopped
+  #   environment:
+  #     # server-side only (Nitro). NUNCA prefixar com VITE_ → não vaza no bundle.
+  #     CORE_API_URL: http://core-api:3000/api/v2
+  #     PORT: "3000"
+  #   depends_on:
+  #     core-api:
+  #       condition: service_healthy
+  #   networks: [erp-net]
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   container_name: erp-caddy
+  #   restart: unless-stopped
+  #   ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
+  #   volumes:
+  #     - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #     - caddy-config:/config
+  #   depends_on:
+  #     web:
+  #       condition: service_healthy
+  #     core-api:
+  #       condition: service_healthy
+  #   networks: [erp-net]
 
 volumes:
   mysql-data:
     name: erp-mysql-data
+  minio-data:
+    name: erp-minio-data
 
 networks:
   erp-net:

@@ -1,0 +1,30 @@
+# Caddy — borda HTTPS local. CA interna gera certs para *.localhost
+# (na 1ª subida o Caddy instala a CA; aceite no navegador ou rode `caddy trust`).
+#
+# Usa NOMES DE SERVIÇO (web, core-api) — independentes de nome de pasta. Migrar
+# a pasta da camada não muda este arquivo.
+
+# Front + BFF — o que o browser realmente acessa.
+app.localhost {
+	tls internal
+	encode gzip
+
+	# Security headers redundantes na borda (ADR-0006 do front). A CSP dinâmica
+	# vive no middleware do BFF. Caddy já redireciona HTTP→HTTPS.
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
+
+	reverse_proxy web:3000
+}
+
+# DEV-ONLY — atalho para o Swagger/health do core-api. Em produção o backend
+# NUNCA é exposto ao browser (a arquitetura BFF proíbe). Útil só para debugar.
+api.localhost {
+	tls internal
+	reverse_proxy core-api:3000
+}

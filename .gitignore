@@ -3,6 +3,15 @@ local/.env
 .env
 .env.local
 
+# Override de build de pasta-irmã — só faz sentido DENTRO do mono_repo (depende
+# de ../../core-api e ../../web-app no disco). Fora dele quebraria o `up`.
+local/docker-compose.override.yml
+local/docker-compose.override.yaml
+
+# TLS interno do Caddy (CA + certs *.localhost gerados em runtime)
+local/caddy/data/
+local/caddy/config/
+
 # OS artifacts
 .DS_Store
 Thumbs.db
