@@ -1,0 +1,165 @@
+name: erp-bem-comum-qa
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:c36050afdca850f23cef85703f84c7531a5ae155a11b5ee1c60acb09937c4084
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?defina MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: core
+      MYSQL_USER: core_app
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?defina MYSQL_APP_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --authentication-policy=caching_sha2_password
+      - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=16M
+      - --max-connections=30
+      - --table-open-cache=200
+      - --temptable-max-ram=32M
+      - --performance-schema=OFF
+      - --skip-log-bin
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api:
+    image: ${CORE_API_IMAGE:-ghcr.io/erp-bem-comum/core-api:qa}
+    restart: unless-stopped
+    entrypoint: ["tini", "--", "node", "src/server.ts"]
+    command: []
+    environment:
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=160
+      AUTH_DRIVER: mysql
+      AUTH_DATABASE_URL: mysql://core_app:${MYSQL_APP_PASSWORD}@mysql:3306/core
+      PARTNERS_DRIVER: mysql
+      PARTNERS_DATABASE_URL: mysql://core_app:${MYSQL_APP_PASSWORD}@mysql:3306/core
+      CONTRACTS_DRIVER: ${CONTRACTS_DRIVER:-memory}
+      CONTRACTS_DATABASE_URL: mysql://core_app:${MYSQL_APP_PASSWORD}@mysql:3306/core
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    mem_limit: 224m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/erp-bem-comum/bemcomum-web:qa}
+    restart: unless-stopped
+    environment:
+      CORE_API_URL: http://core-api:3000/api/v2
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NODE_OPTIONS: --max-old-space-size=128
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    mem_limit: 192m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine@sha256:77c07d5ebfa5be9fd6c820d2094ae662c9e7eeb9bf98346b7f639900263ee2a2
+    restart: unless-stopped
+    environment:
+      APP_ADDRESS: ${APP_ADDRESS:?defina APP_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    depends_on:
+      web:
+        condition: service_healthy
+    mem_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  # Status page — monitora o site e os serviços internos (sobe/cai). Exposto via
+  # Caddy em https://status.${APP_ADDRESS}. Crie o usuário admin no 1º acesso.
+  uptime-kuma:
+    image: louislam/uptime-kuma:1@sha256:3d632903e6af34139a37f18055c4f1bfd9b7205ae1138f1e5e8940ddc1d176f9
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    mem_limit: 224m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - internal
+
+# Deploy automático: feito por push-via-CI (GitHub Actions → SSH → deploy.sh),
+# não por container de polling. Ver .github/workflows/deploy-qa.yml nos repos
+# core-api/web-app e o forced-command em ~ubuntu/.ssh/authorized_keys.
+
+volumes:
+  mysql-data:
+  caddy-data:
+  caddy-config:
+  uptime-kuma-data:
+
+networks:
+  internal:
+    driver: bridge
