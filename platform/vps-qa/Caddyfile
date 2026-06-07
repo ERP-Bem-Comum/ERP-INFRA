@@ -1,0 +1,19 @@
+{$APP_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	reverse_proxy web:3000
+}
+
+# Status page (Uptime Kuma) — TLS automático no subdomínio status.
+status.{$APP_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy uptime-kuma:3001
+}
