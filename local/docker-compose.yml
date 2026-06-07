@@ -54,9 +54,12 @@ services:
       # espelham a config de produção para flagrar bugs de replicação cedo.
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --default-authentication-plugin=caching_sha2_password
+      # MySQL 8.4 removeu --default-authentication-plugin; o substituto é
+      # --authentication-policy (caching_sha2_password segue sendo o default).
+      - --authentication-policy=caching_sha2_password
       - --log-bin=binlog
-      - --binlog-format=ROW
+      # --binlog-format=ROW omitido: ROW já é o default desde o MySQL 8.0 e a flag
+      # foi DEPRECADA no 8.4 (gera warning a cada boot; removível em versão futura).
       - --gtid-mode=ON
       - --enforce-gtid-consistency=ON
     ports:
@@ -94,7 +97,9 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # Liveness oficial via HTTP (curl existe na imagem minio). Não depende do alias
+      # `mc local`, que só é configurado no container minio-bootstrap (separado).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -106,7 +111,7 @@ services:
 
   # One-shot idempotente: cria o bucket de documentos quando o MinIO fica healthy.
   minio-bootstrap:
-    image: minio/mc:latest
+    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: erp-minio-bootstrap
     depends_on:
       minio:
@@ -125,7 +130,7 @@ services:
 
   # phpMyAdmin — opcional. Suba com: docker compose --profile tools up -d
   phpmyadmin:
-    image: phpmyadmin:5.2
+    image: phpmyadmin:5.2@sha256:7dfd52c452049bf077f5ae6d46324f5f33ea0130c16b958d9821aff5c6f812ef
     container_name: erp-phpmyadmin
     profiles: ["tools"]
     environment:
@@ -137,6 +142,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
     networks:
       - erp-net
 
