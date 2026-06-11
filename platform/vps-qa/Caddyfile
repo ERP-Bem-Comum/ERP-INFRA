@@ -9,5 +9,7 @@
 		-Server
 	}
 
-	reverse_proxy core-api:3000
+	# Front + BFF na raiz. O browser fala só com o web; o core-api é interno
+	# (o BFF do web o consome via CORE_API_URL na rede docker).
+	reverse_proxy web:3000
 }

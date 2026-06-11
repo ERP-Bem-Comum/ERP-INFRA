@@ -18,6 +18,10 @@ if [ ! -s secrets/auth-jwt-private-key.pem ]; then
     -out secrets/auth-jwt-public-key.pem
 fi
 
+# SMTP_PASS é externo (provedor de e-mail). Cria vazio para o compose não falhar;
+# enquanto vazio, o mailer fica no-op. Preencher com a senha real ativa o envio.
+[ -e secrets/smtp-pass ] || : > secrets/smtp-pass
+
 # O core-api roda non-root (uid 10001) e o Compose monta os secrets como bind mount
 # preservando o modo do host. 600/owner-ubuntu → "Permission denied" para o app.
 # 644 deixa o usuário do container ler. Aceitável nesta VPS de QA single-tenant.

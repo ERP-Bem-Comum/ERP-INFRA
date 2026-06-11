@@ -1,9 +1,11 @@
 name: erp-bem-comum-qa
 
 # Stack de QA (PBE — ADR-0021) numa única VPS Magalu BV1-2-10 (1 vCPU / 2 GB / 10 GB).
-# A imagem do core-api é buildada no GitHub Actions (deploy-qa.yml) e publicada no
-# ghcr; esta VPS NUNCA compila — só faz pull (CORE_API_IMAGE) e sobe.
-# Limites de memória dimensionados para 2 GB + 2 GB de swap (cloud-init).
+# As imagens (core-api e web/BFF) são buildadas no GitHub Actions e publicadas no
+# ghcr; esta VPS NUNCA compila — só faz pull (CORE_API_IMAGE/WEB_IMAGE) e sobe.
+# Limites de memória apertados para caber mysql+core-api+web+caddy em 2 GB + 2 GB
+# de swap (cloud-init). O front (web) é a borda pública; o browser nunca fala com o
+# core-api direto — só via as server functions do web (BFF). Caddy → web → core-api.
 
 x-logging: &logging
   driver: json-file
@@ -24,8 +26,8 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --authentication-policy=caching_sha2_password
-      - --innodb-buffer-pool-size=256M
-      - --max-connections=40
+      - --innodb-buffer-pool-size=160M
+      - --max-connections=30
     volumes:
       - mysql-data:/var/lib/mysql
     secrets:
@@ -37,7 +39,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 60s
-    mem_limit: 768m
+    mem_limit: 576m
     logging: *logging
     security_opt:
       - no-new-privileges:true
@@ -62,11 +64,12 @@ services:
         export AUTH_JWT_PUBLIC_KEY="$$(cat /run/secrets/auth_jwt_public_key)"
         export S3_ACCESS_KEY_ID="$$(cat /run/secrets/s3_access_key_id)"
         export S3_SECRET_ACCESS_KEY="$$(cat /run/secrets/s3_secret_access_key)"
+        if [ -s /run/secrets/smtp_pass ]; then export SMTP_PASS="$$(cat /run/secrets/smtp_pass)"; fi
         exec node src/server.ts
     environment:
       PORT: "3000"
       HOST: 0.0.0.0
-      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=384
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=300
       AUTH_DRIVER: mysql
       PARTNERS_DRIVER: mysql
       CONTRACTS_DRIVER: mysql
@@ -82,6 +85,14 @@ services:
       S3_BUCKET: ${S3_BUCKET:?defina S3_BUCKET}
       S3_ENDPOINT: ${S3_ENDPOINT:-https://br-ne1.magaluobjects.com}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # E-mail (convite/reset — ADR-0010). Nodemailer ativa quando SMTP_* + *_FROM presentes;
+      # ausentes → mailer no-op (não envia). SMTP_PASS vem por secret.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      AUTH_INVITE_FROM: ${AUTH_INVITE_FROM:-}
+      AUTH_RESET_FROM: ${AUTH_RESET_FROM:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -91,13 +102,40 @@ services:
       - auth_jwt_public_key
       - s3_access_key_id
       - s3_secret_access_key
+      - smtp_pass
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 24
       start_period: 90s
-    mem_limit: 768m
+    mem_limit: 512m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  # Front + BFF (TanStack Start). Borda pública via Caddy; consome o core-api na rede
+  # interna (CORE_API_URL). Boot exige só CORE_API_URL (ver src/external/config/env.config.ts).
+  web:
+    image: ${WEB_IMAGE:?defina WEB_IMAGE}
+    restart: unless-stopped
+    environment:
+      CORE_API_URL: http://core-api:3000/api/v2
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NODE_OPTIONS: --max-old-space-size=288
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    mem_limit: 448m
     logging: *logging
     security_opt:
       - no-new-privileges:true
@@ -117,9 +155,9 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      core-api:
+      web:
         condition: service_healthy
-    mem_limit: 96m
+    mem_limit: 72m
     logging: *logging
     security_opt:
       - no-new-privileges:true
@@ -139,6 +177,8 @@ secrets:
     file: ./secrets/s3-access-key-id
   s3_secret_access_key:
     file: ./secrets/s3-secret-access-key
+  smtp_pass:
+    file: ./secrets/smtp-pass
 
 volumes:
   mysql-data:
