@@ -1,0 +1,150 @@
+name: erp-bem-comum-qa
+
+# Stack de QA (PBE — ADR-0021) numa única VPS Magalu BV1-2-10 (1 vCPU / 2 GB / 10 GB).
+# A imagem do core-api é buildada no GitHub Actions (deploy-qa.yml) e publicada no
+# ghcr; esta VPS NUNCA compila — só faz pull (CORE_API_IMAGE) e sobe.
+# Limites de memória dimensionados para 2 GB + 2 GB de swap (cloud-init).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:c36050afdca850f23cef85703f84c7531a5ae155a11b5ee1c60acb09937c4084
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_DATABASE: core
+      MYSQL_USER: core_app
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_app_password
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --authentication-policy=caching_sha2_password
+      - --innodb-buffer-pool-size=256M
+      - --max-connections=40
+    volumes:
+      - mysql-data:/var/lib/mysql
+    secrets:
+      - mysql_root_password
+      - mysql_app_password
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$(cat /run/secrets/mysql_root_password) --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    mem_limit: 768m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    # As migrations de cada módulo (auth/partners/contracts/programs) rodam no boot,
+    # quando o driver mysql é construído. Banco zerado → primeiro start cria as tabelas.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export AUTH_DATABASE_URL="$${DB_URL}"
+        export PARTNERS_DATABASE_URL="$${DB_URL}"
+        export CONTRACTS_DATABASE_URL="$${DB_URL}"
+        export PROGRAMS_DATABASE_URL="$${DB_URL}"
+        export AUTH_JWT_PRIVATE_KEY="$$(cat /run/secrets/auth_jwt_private_key)"
+        export AUTH_JWT_PUBLIC_KEY="$$(cat /run/secrets/auth_jwt_public_key)"
+        export S3_ACCESS_KEY_ID="$$(cat /run/secrets/s3_access_key_id)"
+        export S3_SECRET_ACCESS_KEY="$$(cat /run/secrets/s3_secret_access_key)"
+        exec node src/server.ts
+    environment:
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=384
+      AUTH_DRIVER: mysql
+      PARTNERS_DRIVER: mysql
+      CONTRACTS_DRIVER: mysql
+      PROGRAMS_DRIVER: mysql
+      AUTH_RESET_BASE_URL: ${APP_URL:?defina APP_URL}
+      AUTH_LOGIN_RATE_LIMIT_MAX: ${AUTH_LOGIN_RATE_LIMIT_MAX:-5}
+      AUTH_LOGIN_RATE_LIMIT_WINDOW: ${AUTH_LOGIN_RATE_LIMIT_WINDOW:-1 minute}
+      # Atrás do Caddy na mesma rede docker — confiar nos X-Forwarded-*.
+      TRUST_PROXY: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Storage de documentos (contracts — ADR-0019/0021). Object-storage da Magalu (S3-compat).
+      S3_REGION: ${S3_REGION:-br-ne1}
+      S3_BUCKET: ${S3_BUCKET:?defina S3_BUCKET}
+      S3_ENDPOINT: ${S3_ENDPOINT:-https://br-ne1.magaluobjects.com}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+      - auth_jwt_private_key
+      - auth_jwt_public_key
+      - s3_access_key_id
+      - s3_secret_access_key
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 90s
+    mem_limit: 768m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine@sha256:77c07d5ebfa5be9fd6c820d2094ae662c9e7eeb9bf98346b7f639900263ee2a2
+    restart: unless-stopped
+    environment:
+      APP_ADDRESS: ${APP_ADDRESS:?defina APP_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      core-api:
+        condition: service_healthy
+    mem_limit: 96m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+secrets:
+  mysql_root_password:
+    file: ./secrets/mysql-root-password
+  mysql_app_password:
+    file: ./secrets/mysql-app-password
+  auth_jwt_private_key:
+    file: ./secrets/auth-jwt-private-key.pem
+  auth_jwt_public_key:
+    file: ./secrets/auth-jwt-public-key.pem
+  s3_access_key_id:
+    file: ./secrets/s3-access-key-id
+  s3_secret_access_key:
+    file: ./secrets/s3-secret-access-key
+
+volumes:
+  mysql-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge

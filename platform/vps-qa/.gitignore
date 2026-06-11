@@ -1,0 +1,3 @@
+# Secrets e env locais — gerados na VM por init-secrets.sh, nunca versionados.
+secrets/
+.env
