@@ -70,6 +70,21 @@ flowchart TB
 - Datadog Logs
 - Elastic Stack
 
+### Estado atual do `web-app` (BFF) — web-app ADR-0014/0019
+
+Implementado (feature `035-prod-deploy-hardening`):
+
+- **pino** → stdout JSON; campos `service: web-app-bff`, `request_id`, `level`, `timestamp`; **redaction** de
+  token/cookie/senha/segredo/PII/host interno (sem stack em `info`/`warn`).
+- **`X-Request-Id`** em TODA resposta (honra o de entrada do edge ou gera UUID) — o mesmo `request_id` vai aos
+  logs de erro; em erro, a UI mostra um **reference id** (= `request_id`) **sem vazar detalhe** (OWASP Error
+  Handling). Triagem: usuário cita o código → dev grepa o log pelo mesmo id.
+- Nível por `LOG_LEVEL` (default `info` em prod); debug verboso é **gated + time-boxed**.
+- **Acesso aos logs**: só por canal privado (Tailscale na QA / rede privada na prod), nunca exposto.
+
+Adiado (fase 1 pós-MVP): **OpenTelemetry** (`trace_id` nos logs + spans BFF→core-api via `traceparent`) +
+backend **self-hosted no tailnet** (SigNoz/Grafana) + **GlitchTip** (exceções). `/metrics` Prometheus segue incremental.
+
 ---
 
 ## 3. Métricas

@@ -59,6 +59,18 @@ Formato esperado: `mysql://user:password@host:3306/database?ssl-mode=REQUIRED`
 |---|---|---|---|
 | `OCR_PROVIDER_KEY` | Chave do provedor OCR | `core-api` | quando contratado |
 
+### 2.5. CI / Deploy (secrets de pipeline — GitHub Actions, NÃO o Secrets Manager de runtime)
+
+| Nome do slot | Propósito | Onde | Rotação |
+|---|---|---|---|
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client — o deploy de QA entra no tailnet (web-app `deploy-qa.yml`) | GitHub Secrets (repo web-app) | conforme política |
+| `TS_OAUTH_SECRET` | Secret do OAuth client (escopo auth-keys + `tag:ci`) | GitHub Secrets (repo web-app) | conforme política |
+
+> **Sem chave SSH longeva** (web-app ADR-0018): o deploy de QA usa **Tailscale SSH** (identidade via ACL
+> `tag:ci` → `ubuntu@erp-bem-comum-qa`). Quando a prod migrar para AWS gerenciado (gatilhos do ADR-0002), o
+> deploy passa a usar **GitHub OIDC→AWS** (assume-role, credencial efêmera) — sem secret longevo no repo.
+> No baseline atual (Lightsail single-node, ADR-0002), o deploy é por **script versionado** na instância.
+
 ---
 
 ## 3. Convenções de nomeação
