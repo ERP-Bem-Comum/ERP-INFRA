@@ -2,6 +2,12 @@
 
 # 🔐 Catálogo de Secrets
 
+> ✅ **Fonte de verdade (verificada no código): [`env-and-secrets.reference.yaml`](env-and-secrets.reference.yaml)** —
+> catálogo COMPLETO de TODAS as env vars e secrets do **frontend (web-app)** e do **backend (core-api)**,
+> extraído do código real (`web-app@develop` + `core-api@dev`), com obrigatoriedade/formato/secret/quem-lê +
+> checklist de subida e armadilhas. **Esta página (markdown) é um resumo e tem partes legadas** (ex.: cita
+> Bradesco/OIDC/Postgres/`JWT_SIGNING_KEY` que **não existem** no código) — em caso de divergência, vale o YAML.
+
 > **Status:** 🔵 PLANEJADA — sincronizada com [handbook infrastructure/03-secrets-catalog.md](https://github.com/ERP-Bem-Comum). Time de Infra: atualize quando os slots forem provisionados no Secrets Manager.
 
 > ⚠️ **Este arquivo lista NOMES e PROPÓSITOS de secrets, NUNCA valores.** Qualquer PR contendo valor real é bloqueado pelo secret scanning da org.
