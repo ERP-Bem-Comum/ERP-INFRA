@@ -90,7 +90,10 @@ cd ../ERP-INFRA/local
 build (Chainguard) → Trivy → push GHCR (:qa + :sha) → tailnet (TS_AUTHKEY) → SSH ubuntu@erp-bem-comum-qa
   → docker system prune -af (auto-cura de disco) → /opt/erp-qa/deploy.sh (pull :qa + up --wait)
 ```
-Disparo manual: `gh workflow run build-publish.yml --repo ERP-Bem-Comum/web-app --ref develop`.
+Disparo = **push em `develop`** (é o gatilho confiável). ⚠️ `gh workflow run`/`workflow_dispatch`/`schedule`
+do GitHub **só disparam da branch default `main`** — como os workflows vivem na `develop`, **use push**
+(um commit vazio `git commit --allow-empty` força um run). Some isso some quando a `develop` virar default
+ou os workflows forem pra `main`.
 ⚠️ o **core-api** tem pipeline/imagem própria; o `deploy.sh` puxa **as duas** — garanta que ele também publicou.
 
 ## 5. Prod (Lightsail, interino — ADR-0002)
@@ -191,11 +194,14 @@ curl -fsS $HOST/ready     # 200 {"status":"ready","checks":{"config":true,"coreA
 
 ## RB-008 — Rotação da auth key do tailnet
 - **Quando:** `TS_AUTHKEY` expirou (⚠️ **2026-09-23**) ou foi comprometida. (Rastreado: web-app **issue #92**.)
+- **Aviso automático:** o job `deploy-qa` (no `build-publish.yml`) avisa (issue) quando faltam ≤14 dias.
 - **Resolução:**
   1. Crie nova auth key `tag:ci` (reusable+ephemeral+preauth) via Tailscale API ou console.
   2. `printf '%s' "<nova>" | gh secret set TS_AUTHKEY --repo ERP-Bem-Comum/web-app` (sem ecoar).
-  3. (Opcional) revogue a key antiga.
-- **Verificação:** `gh workflow run build-publish.yml --ref develop` → step "Conectar na tailnet" verde.
+  3. **Atualize o `KEY_EXPIRY`** em `web-app/.github/workflows/build-publish.yml` (job `deploy-qa`) p/ a nova data.
+  4. (Opcional) revogue a key antiga.
+- **Verificação:** no próximo **push em `develop`** (ou re-deploy) o step *Conectar na tailnet* fica verde.
+  (`gh workflow run`/agendado **não** dispara de `develop` — só da branch default `main`.)
 
 ---
 
@@ -225,10 +231,12 @@ Regra: segredo **nunca** em git/imagem/log.
 
 - **Toda vez que um incidente novo acontecer**, adicione um **RB-xxx** aqui (Sintoma→Diagnóstico→Resolução→Verificação→Escalonar). Runbook desatualizado é pior que não ter.
 - **Candidatos a automação** (princípio Splunk — reduzir variáveis, tornar modular):
-  - ✅ já automatizado: build+scan+publish+deploy (1 push), prune de disco no deploy.
-  - ⏳ a fazer: script único de **smoke check** (`health`+`ready`+login negativo) rodando no fim do `deploy-qa`;
-    alerta quando `TS_AUTHKEY` estiver a <14 dias de expirar; `/ready` sondando uma rota real `/api/v2` (não só `/health`);
-    OpenTelemetry + GlitchTip self-hosted no tailnet (observabilidade — ADR-0019).
+  - ✅ já automatizado: build+scan+publish+deploy (1 push); prune de disco no deploy; **smoke-check `/ready`
+    pós-deploy**; **`/ready` sonda uma rota real `/api/v2`** (pega CORE_API_URL errado); **aviso de expiração
+    da `TS_AUTHKEY` (<14d)** no job `deploy-qa`.
+  - ⏳ a fazer: **OpenTelemetry + GlitchTip** self-hosted no tailnet — plano pronto em
+    [`observability-self-hosted-plan.md`](observability-self-hosted-plan.md) (ADR-0019);
+    schedule real do alerta de expiração (depende dos workflows estarem na branch default `main`).
 
 ## 14. Referências
 - **[`env-and-secrets.reference.yaml`](../env-and-secrets.reference.yaml)** — catálogo de env/secrets (a referência).
