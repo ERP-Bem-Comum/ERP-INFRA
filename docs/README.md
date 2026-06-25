@@ -8,8 +8,10 @@ Esta pasta é a **especificação técnica viva** da infraestrutura do ERP Bem C
 |---|---|---|
 | [`topology.md`](topology.md) | Diagrama Mermaid de componentes e fluxos | Dev + Infra |
 | [`environments.md`](environments.md) | dev / staging / prod — diferenças e promoção | Dev + Infra |
-| [`secrets.md`](secrets.md) | Catálogo de secrets esperados | Dev + Infra + Security |
+| [`secrets.md`](secrets.md) | Catálogo de secrets (resumo; ver o YAML abaixo) | Dev + Infra + Security |
+| [`env-and-secrets.reference.yaml`](env-and-secrets.reference.yaml) | **Catálogo COMPLETO de env vars & secrets** (frontend + backend), verificado no código — a referência | Dev + Infra + Security |
 | [`observability.md`](observability.md) | Logs, métricas, tracing, alertas baseline | Dev + Infra + Oncall |
+| [`runbooks/deploy-and-operations.md`](runbooks/deploy-and-operations.md) | **Runbook de deploy & operações** — subir, verificar, debugar (RBs), rollback, rotação | Dev + Infra + Oncall |
 | [`adr/`](adr/) | Decisões arquiteturais específicas deste repo | Todos |
 
 ## Status dos documentos
