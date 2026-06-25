@@ -12,6 +12,7 @@ Esta pasta é a **especificação técnica viva** da infraestrutura do ERP Bem C
 | [`env-and-secrets.reference.yaml`](env-and-secrets.reference.yaml) | **Catálogo COMPLETO de env vars & secrets** (frontend + backend), verificado no código — a referência | Dev + Infra + Security |
 | [`observability.md`](observability.md) | Logs, métricas, tracing, alertas baseline | Dev + Infra + Oncall |
 | [`runbooks/deploy-and-operations.md`](runbooks/deploy-and-operations.md) | **Runbook de deploy & operações** — subir, verificar, debugar (RBs), rollback, rotação | Dev + Infra + Oncall |
+| [`runbooks/observability-self-hosted-plan.md`](runbooks/observability-self-hosted-plan.md) | Plano de OTel + GlitchTip self-hosted no tailnet (fase 1 — ADR-0019) | Dev + Infra |
 | [`adr/`](adr/) | Decisões arquiteturais específicas deste repo | Todos |
 
 ## Status dos documentos
