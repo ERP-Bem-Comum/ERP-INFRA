@@ -136,6 +136,14 @@ services:
       retries: 15
       start_period: 30s
     mem_limit: 448m
+    # Hardening do front distroless non-root (web-app ADR-0015 / CIS Docker-Bench — issue #3):
+    # o runtime só escreve em /tmp e liga na :3000 (não privilegiada) → FS read-only + sem capabilities.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    pids_limit: 256
     logging: *logging
     security_opt:
       - no-new-privileges:true
