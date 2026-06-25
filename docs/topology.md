@@ -2,7 +2,9 @@
 
 # 🏗️ Topologia do Sistema
 
-> **Status:** PLANEJADA (alvo de produção) — esta é a topologia decidida em ADRs do handbook. Descreve o **alvo de produção**, não o que sobe no dev local (isso fica em [`../local/README.md`](../local/README.md)). Confirmar com o time de infra se a infra REAL provisionada já reflete este desenho. Atualizar quando divergir.
+> **Status:** PLANEJADA (alvo de produção) — esta é a topologia decidida em ADRs do handbook. Descreve o **alvo de produção** (alta disponibilidade), não o que sobe no dev local (isso fica em [`../local/README.md`](../local/README.md)). Confirmar com o time de infra se a infra REAL provisionada já reflete este desenho. Atualizar quando divergir.
+>
+> ⚠️ **Baseline atual ≠ este alvo.** A produção entra **single-node** em **AWS Lightsail** (Docker Compose: `web-app` + `core-api` + MySQL + Caddy), por economia — ver [`adr/0002-producao-economica-aws-lightsail.md`](adr/0002-producao-economica-aws-lightsail.md). Diferenças vs. o desenho abaixo: **sem** Load Balancer/WAF (o **Caddy** é o único serviço exposto e termina o TLS), **1 réplica** de cada serviço (as sessões do `web-app` são **in-memory** e se perdem em restart), e **MySQL no mesmo host** (não managed Multi-AZ/PITR). Este diagrama é o **destino da migração** (gatilhos no ADR-0002), não o que está no ar hoje. A imagem do `web-app` é **distroless non-root** (web-app ADR-0015) e expõe `/health` + `/ready`.
 >
 > **Fontes-fonte da decisão:** [handbook architecture/02-system-topology.md](https://github.com/ERP-Bem-Comum) e [handbook infrastructure/01-infra-handoff.md](https://github.com/ERP-Bem-Comum).
 
