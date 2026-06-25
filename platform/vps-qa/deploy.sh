@@ -29,3 +29,10 @@ docker compose --env-file .env config --quiet
 docker compose --env-file .env pull
 docker compose --env-file .env up -d --wait --remove-orphans
 docker compose --env-file .env ps
+
+# Anti-disco-cheio (VPS 10 GB): remove imagens NÃO usadas por nenhum container em execução
+# — os builds :qa/sha-… antigos que se acumulam a cada deploy. Roda DEPOIS do `up --wait`
+# (stack nova já saudável) p/ não atrapalhar rollback. NUNCA usa --volumes: o banco (volume
+# do MySQL) é preservado. Falha aqui não derruba o deploy (`|| true`).
+docker image prune -af || true
+docker builder prune -af || true

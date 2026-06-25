@@ -49,8 +49,8 @@ services:
   core-api:
     image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
     restart: unless-stopped
-    # As migrations de cada módulo (auth/partners/contracts/programs) rodam no boot,
-    # quando o driver mysql é construído. Banco zerado → primeiro start cria as tabelas.
+    # As migrations rodam no serviço one-off `core-api-migrate` (job dedicado, #211) ANTES
+    # deste container subir (depends_on service_completed_successfully) — NÃO mais no boot.
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -60,6 +60,7 @@ services:
         export PARTNERS_DATABASE_URL="$${DB_URL}"
         export CONTRACTS_DATABASE_URL="$${DB_URL}"
         export PROGRAMS_DATABASE_URL="$${DB_URL}"
+        export FINANCIAL_DATABASE_URL="$${DB_URL}"
         export AUTH_JWT_PRIVATE_KEY="$$(cat /run/secrets/auth_jwt_private_key)"
         export AUTH_JWT_PUBLIC_KEY="$$(cat /run/secrets/auth_jwt_public_key)"
         export S3_ACCESS_KEY_ID="$$(cat /run/secrets/s3_access_key_id)"
@@ -74,6 +75,7 @@ services:
       PARTNERS_DRIVER: mysql
       CONTRACTS_DRIVER: mysql
       PROGRAMS_DRIVER: mysql
+      FINANCIAL_DRIVER: mysql
       AUTH_RESET_BASE_URL: ${APP_URL:?defina APP_URL}
       AUTH_LOGIN_RATE_LIMIT_MAX: ${AUTH_LOGIN_RATE_LIMIT_MAX:-5}
       AUTH_LOGIN_RATE_LIMIT_WINDOW: ${AUTH_LOGIN_RATE_LIMIT_WINDOW:-1 minute}
@@ -96,6 +98,9 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      # Espera as migrations concluírem (exit 0) antes de subir o servidor (#211).
+      core-api-migrate:
+        condition: service_completed_successfully
     secrets:
       - mysql_app_password
       - auth_jwt_private_key
@@ -110,6 +115,34 @@ services:
       retries: 24
       start_period: 90s
     mem_limit: 512m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  # Migrations (one-off) — aplica as migrations Drizzle de TODOS os módulos no banco único
+  # `core` ANTES do core-api subir. Desde o #211 o migrate saiu do boot do core-api e virou
+  # este job (`src/jobs/migrate/run.ts`, lê MIGRATE_DATABASE_URL). Reusa a MESMA imagem do
+  # core-api (já no ghcr — não builda aqui). Idempotente: a cada deploy aplica só as pendentes.
+  core-api-migrate:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        export MIGRATE_DATABASE_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        exec node src/jobs/migrate/run.ts
+    environment:
+      # Roda o .ts via strip-types (mesma do core-api); banco único (ADR-0014) migra todos os módulos.
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=256
+    depends_on:
+      mysql:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+    mem_limit: 320m
     logging: *logging
     security_opt:
       - no-new-privileges:true
