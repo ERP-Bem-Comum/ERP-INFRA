@@ -22,7 +22,7 @@
 - **Privado por padrão:** tudo no **tailnet** (sem porta pública). OTLP e UIs só acessíveis por Tailscale.
 - **Vendor-neutral:** instrumentar com **OpenTelemetry** (troca de backend sem reescrever o app).
 - **Correlação:** o `trace_id` do OTel entra nos logs (junto do `request_id` que já existe) → log ↔ trace ↔ erro.
-- **Custo consciente:** observability é pesada (ClickHouse/Postgres). Roda num **nó dedicado** (não na VPS de 10 GB).
+- **Custo consciente:** observability é pesada (ClickHouse/Postgres). Roda num **nó dedicado** (não na VPS de 20 GB).
 
 ## 2. Componentes (o que subir)
 

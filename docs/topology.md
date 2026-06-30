@@ -27,7 +27,7 @@ flowchart TB
     WEB -- "server functions (BFF)<br/>/api/v2/* via HTTP interno" --> CORE
 
     subgraph INT["Aplicação — subnets privadas (tasks rodam atrás do LB)"]
-        CORE["⭐ core-api<br/>Node 24 LTS · Fastify<br/>Modular Monolith<br/>Exposto via LB (HTTPS) + chamado pelo BFF<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
+        CORE["⭐ core-api<br/>Node 24 LTS · Fastify<br/>Modular Monolith<br/>Exposto via LB (HTTPS) + chamado pelo BFF<br/>Stateless · ≥2 réplicas<br/>1 GB / 0.5 vCPU"]
     end
 
     CORE --> DB

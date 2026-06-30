@@ -65,7 +65,7 @@
 |---|---|---|---|
 | dev local | sua máquina | `ERP-INFRA/local/up.sh` | build local |
 | **x99** | VM `incus` no homelab (sandbox de validação) | Docker Compose na VM | build/pull local |
-| **QA** | VPS Magalu `erp-bem-comum-qa` (`201.23.88.74`, 10 GB) | **CI/CD** (push `develop`) | `ghcr.io/.../bemcomum-web:qa` |
+| **QA** | VPS Magalu `erp-bem-comum-qa` (`201.23.88.74`, 20 GB) | **CI/CD** (push `develop`) | `ghcr.io/.../bemcomum-web:qa` |
 | **prod** | AWS **ECS** (ELB + múltiplas tasks da API + RDS) — [ADR-0003](../adr/0003-producao-aws-ecs.md) | **CodePipeline → CodeBuild → CodeDeploy** | `:sha-<commit>` (ECR) |
 | prod (legado) | `erp-bem-comum.codebit.biz` (+ `…-api…`) | Codebit | — |
 
@@ -138,8 +138,8 @@ push em main → CodePipeline
 
 A planta é única (`core-api/compose.yaml`); o que muda por ambiente é só
 dimensionamento/config. Overrides pequenos materializam isso:
-[`local/compose.x99.yaml`](../../local/compose.x99.yaml) (x99) e
-[`platform/vps-qa/compose.qa.yaml`](../../platform/vps-qa/compose.qa.yaml) (qa).
+[`local/docker-compose.override.yml`](../../local/docker-compose.override.yml) (x99) e
+[`platform/vps-qa/compose.yaml`](../../platform/vps-qa/compose.yaml) (qa).
 
 | Item | x99 (incus) | qa (Magalu) | prod (AWS ECS) |
 |---|---|---|---|
@@ -155,7 +155,7 @@ dimensionamento/config. Overrides pequenos materializam isso:
 
 > ¹ O baseline atual da VPS de QA sobe **0 workers** (eventos cross-módulo
 > acumulam até habilitar — ver `platform/vps-qa/README.md`). O override
-> `compose.qa.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
+> `compose.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
 >
 > **E-mail em prod = Amazon SES via SMTP** (`EMAIL_PROVIDER=smtp`,
 > `SMTP_HOST=email-smtp.<região>.amazonaws.com`), **não** Umbler/Resend. O
@@ -189,8 +189,8 @@ aws ecs describe-tasks --cluster "$CLUSTER" --region "$REGION" --tasks <taskArn>
   --query 'tasks[].{last:lastStatus,reason:stoppedReason,containers:containers[].{name:name,exit:exitCode,reason:reason}}'
 
 # Logs em tempo real (precisa de awslogs na task def — ver 5.3)
-aws logs tail /ecs/core-api-http --follow --region "$REGION"
-aws logs tail /ecs/core-api-email-dispatch --since 15m --region "$REGION"
+aws logs tail /erp/prod/api --follow --region "$REGION"
+aws logs tail /erp/prod/email-dispatch --since 15m --region "$REGION"
 
 # Escalar horizontalmente (nº de réplicas)
 aws ecs update-service --cluster "$CLUSTER" --service core-api-outbox-contracts \
@@ -213,14 +213,14 @@ Definition revision anterior** (que já referencia a `:sha` boa). Não rebuilda 
 
 ```bash
 # 1. Descubra a revision ATUAL e a anterior da família (ex.: core-api-http)
-aws ecs list-task-definitions --family-prefix core-api-http --sort DESC \
+aws ecs list-task-definitions --family-prefix erp-prod-api --sort DESC \
   --region "$REGION" --query 'taskDefinitionArns[:3]' --output table
-#   …:core-api-http:42   ← atual (ruim)
-#   …:core-api-http:41   ← alvo do rollback
+#   …:erp-prod-api:42   ← atual (ruim)
+#   …:erp-prod-api:41   ← alvo do rollback
 
 # 2. Re-aponte o Service para a revision anterior (deploy rolling de volta)
 aws ecs update-service --cluster "$CLUSTER" --service core-api-http \
-  --task-definition core-api-http:41 --region "$REGION"
+  --task-definition erp-prod-api:41 --region "$REGION"
 
 # 3. Repita para CADA Service que foi promovido no deploy ruim (a API E os 5 workers,
 #    se a release tocou todos). Os workers usam a mesma :sha → reverta as 6 famílias.
@@ -242,9 +242,9 @@ aws ecs wait services-stable --cluster "$CLUSTER" --services core-api-http --reg
 | Sintoma | Diagnóstico | Causa provável / Resolução |
 |---|---|---|
 | **Task não sobe** (fica `PENDING`→`STOPPED`) | `describe-tasks` → `stoppedReason` + `containers[].exitCode` | `exit 78` (EX_CONFIG) = env/secret faltando (ex.: `email-dispatch` sem `SMTP_*`) → cheque o `secrets:`/`environment:` da Task Def vs o catálogo. Pull falhou = `executionRole` sem permissão de ECR ou `:sha` inexistente. |
-| **Health check falha** (API `UNHEALTHY` no ELB; tasks reciclando) | console do **target group** → *Targets* `unhealthy`; `aws logs tail /ecs/core-api-http` | O probe bate em `/health` (porta 3000). Confira: porta do target group = `containerPort` 3000; `/ready` (não só `/health`) responde; deadline do `startPeriod`. Se `/ready` dá 503 → [RB-004](#rb-004--ready-retorna-503). Se o core-api explode no login → [RB-005](#rb-005--core-api-authlogin-5xx). |
-| **"Nenhum log no CloudWatch"** | `aws logs tail /ecs/<service>` retorna vazio mesmo com task `RUNNING` | Falta `logConfiguration` com `logDriver: awslogs` na Task Definition (ou o log group não existe / sem permissão). Adicione o bloco `awslogs` (group `/ecs/<service>`, region, stream-prefix `ecs`) — ver `taskdef.json` no guia [`ci-cd-pipeline.md`](ci-cd-pipeline.md#5-codedeploy-ecs--promove-a-imagem). |
-| **Worker em crash-loop** (sobe/morre/sobe) | `describe-tasks` → `exitCode`; `aws logs tail /ecs/core-api-<worker>` | Quase sempre **env/secret faltando**: ex. `email-dispatch` aborta com **exit 78** sem `SMTP_HOST`/`SMTP_PASS`. Workers de outbox crasham se `*_DATABASE_URL` errada/sem rede pro RDS. Corrija o `secrets:`/`environment:` da Task Def, registre nova revision e `update-service`. |
+| **Health check falha** (API `UNHEALTHY` no ELB; tasks reciclando) | console do **target group** → *Targets* `unhealthy`; `aws logs tail /erp/prod/api` | O probe bate em `/health` (porta 3000). Confira: porta do target group = `containerPort` 3000; `/ready` (não só `/health`) responde; deadline do `startPeriod`. Se `/ready` dá 503 → [RB-004](#rb-004--ready-retorna-503). Se o core-api explode no login → [RB-005](#rb-005--core-api-authlogin-5xx). |
+| **"Nenhum log no CloudWatch"** | `aws logs tail /erp/prod/<service>` retorna vazio mesmo com task `RUNNING` | Falta `logConfiguration` com `logDriver: awslogs` na Task Definition (ou o log group não existe / sem permissão). Adicione o bloco `awslogs` (group `/erp/prod/<service>`, region, stream-prefix por tipo: `api`/`worker`/`job`) — ver `taskdef.json` no guia [`ci-cd-pipeline.md`](ci-cd-pipeline.md#5-codedeploy-ecs--promove-a-imagem). |
+| **Worker em crash-loop** (sobe/morre/sobe) | `describe-tasks` → `exitCode`; `aws logs tail /erp/prod/<worker>` | Quase sempre **env/secret faltando**: ex. `email-dispatch` aborta com **exit 78** sem `SMTP_HOST`/`SMTP_PASS`. Workers de outbox crasham se `*_DATABASE_URL` errada/sem rede pro RDS. Corrija o `secrets:`/`environment:` da Task Def, registre nova revision e `update-service`. |
 
 > Para crash **por env inválida no boot** (qualquer serviço), a causa-raiz e o catálogo de env estão
 > em [RB-003](#rb-003--container-crasha-no-boot) + [`env-and-secrets.reference.yaml`](../env-and-secrets.reference.yaml).
@@ -253,7 +253,7 @@ aws ecs wait services-stable --cluster "$CLUSTER" --services core-api-http --reg
 
 ## 6. Verificação pós-deploy (smoke checks)
 ```bash
-HOST=https://erp-bem-comum.codebit.biz        # local: https://app.localhost (use curl -k p/ a CA interna)
+HOST=https://<DOMINIO_FRONT>        # prod ECS: domínio do front (a confirmar com infra) · local: https://app.localhost (use curl -k p/ a CA interna)
 curl -fsS $HOST/health    # 200 (liveness; não toca o backend)
 curl -fsS $HOST/ready     # 200 {"status":"ready","checks":{"config":true,"coreApi":true}} ; senão 503
 ```

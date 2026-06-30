@@ -213,8 +213,8 @@ buildx build` do estágio `runtime` do [`Dockerfile`](../../../core-api/Dockerfi
 grava os arquivos que o Deploy vai consumir.
 
 A **tag é o SHA do commit** (`sha-<commit>`) — imutável. Isso é o que torna o rollback trivial: cada
-deploy tem um nome único e estável, e voltar é só apontar para a tag antiga (§4 do
-[`deploy-and-operations.md`](deploy-and-operations.md#rb-009--rollback-em-produção-ecs)).
+deploy tem um nome único e estável, e voltar é só apontar para a tag antiga (§5.2 do
+[`deploy-and-operations.md`](deploy-and-operations.md#52-rollback-em-produção-ecs)).
 
 ### Exemplo (`buildspec.yml` completo e comentado)
 
@@ -226,8 +226,8 @@ version: 0.2
 
 env:
   variables:
-    AWS_REGION: "<região>"                                   # ex.: us-east-1 — a confirmar com infra
-    ECR_REPO: "<conta>.dkr.ecr.<região>.amazonaws.com/core-api"
+    AWS_REGION: "<REGIAO>"                                   # ex.: us-east-1 — a confirmar com infra
+    ECR_REPO: "<conta>.dkr.ecr.<REGIAO>.amazonaws.com/core-api"
   exported-variables:
     - IMAGE_TAG          # exporta a tag p/ o próximo stage do pipeline poder referenciá-la
 
@@ -311,7 +311,7 @@ A imagem é **uma só** (`core-api`) — a mesma para a API e para os 5 workers.
 ### Como o ECS referencia
 
 No `taskdef.json` (§4 a seguir) o campo `image` recebe a URI completa
-`<conta>.dkr.ecr.<região>.amazonaws.com/core-api:sha-<commit>`. No deploy **rolling**, quem injeta a
+`<conta>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>`. No deploy **rolling**, quem injeta a
 URI é o `imagedefinitions.json`; no **blue/green**, é o `imageDetail.json` (via placeholder
 `<IMAGE1_NAME>`). O `executionRoleArn` da task precisa de permissão de `ecr:GetDownloadUrlForLayer` /
 `ecr:BatchGetImage` para fazer o `image pull`.
@@ -365,7 +365,7 @@ Resources:
 
 ```jsonc
 {
-  "family": "core-api-http",
+  "family": "erp-prod-api",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",                                   // 0.5 vCPU — alinhado à topology.md
@@ -405,9 +405,9 @@ Resources:
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/core-api-http",
-          "awslogs-region": "<região>",
-          "awslogs-stream-prefix": "ecs"
+          "awslogs-group": "/erp/prod/api",
+          "awslogs-region": "<REGIAO>",
+          "awslogs-stream-prefix": "api"
         }
       }
     }
@@ -450,7 +450,7 @@ script, a Task Definition sobrescreve `entryPoint` (mantendo `tini -- node` como
 ```jsonc
 // taskdef do outbox-contracts (mesma imagem :sha-<commit>, papel diferente)
 {
-  "family": "core-api-outbox-contracts",
+  "family": "erp-prod-outbox-contracts",
   // …networkMode, roles, logConfiguration idênticos ao http, SEM portMappings (não tem ELB)…
   "containerDefinitions": [
     {
@@ -460,7 +460,7 @@ script, a Task Definition sobrescreve `entryPoint` (mantendo `tini -- node` como
       "command":   ["src/modules/contracts/worker/run.ts"],       // ← o que muda entre workers
       "secrets":   [ { "name": "CONTRACTS_DATABASE_URL", "valueFrom": "<arn_secret>:CONTRACTS_DATABASE_URL::" } ],
       "logConfiguration": { "logDriver": "awslogs",
-        "options": { "awslogs-group": "/ecs/core-api-outbox-contracts", "awslogs-region": "<região>", "awslogs-stream-prefix": "ecs" } }
+        "options": { "awslogs-group": "/erp/prod/outbox-contracts", "awslogs-region": "<REGIAO>", "awslogs-stream-prefix": "worker" } }
     }
   ]
 }

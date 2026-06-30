@@ -11,14 +11,19 @@ Esta pasta é o **lar da IaC real**: o código que provisiona e mantém o que es
 
 ## QA rápido na Magalu Cloud
 
-- Provisionamento: [`tofu/environments/qa/`](tofu/environments/qa/)
+- **Provisionamento canônico: `mgc` CLI** (CLI da Magalu Cloud) — o passo
+  operacional atual está em [`vps-qa/README.md`](vps-qa/README.md) (§"Provisionamento
+  da VPS").
+- IaC OpenTofu em [`tofu/environments/qa/`](tofu/environments/qa/) — **referência /
+  IaC futura**, **não** é o passo operacional de hoje (a VM existente não está no state).
 - Runtime da VPS: [`vps-qa/`](vps-qa/)
 - VM criada: Ubuntu 24.04, `br-ne1-a`, `BV1-2-20`
 - ID: `c9e17d68-a474-41b2-a079-be747192f55c`
 - Chave SSH: `erp-bem-comum`; usuário: `ubuntu`
 
-> A VM foi criada inicialmente pelo painel. Não execute `tofu apply` até
-> importar os recursos existentes para o state, para evitar recursos duplicados.
+> A VM foi criada via `mgc` CLI / painel. O [`tofu/`](tofu/) é **referência** — **não
+> execute `tofu apply`** até importar os recursos existentes para o state (evita
+> recursos duplicados).
 
 Esse QA é econômico e single-node. Não substitui o `staging` espelhado a
 produção descrito em [`../docs/environments.md`](../docs/environments.md).

@@ -97,8 +97,8 @@ Use o [`api.taskdef.json`](taskdefs/api.taskdef.json) como referência ao ler.
 
 | Campo | O que é / por que importa |
 |---|---|
-| **`name`** | Nome do container — **`core-api` em TODOS os 8 task defs** (uniforme de propósito). Como a imagem é a mesma e cada task tem 1 container, padronizar o nome faz o `imagedefinitions.json` que o CodeBuild emite (`{"name":"core-api",...}`) servir a **qualquer** serviço, e o `Image1ContainerName`/`ContainerName` do CodeDeploy bater sempre — sem gerar um artefato por serviço. Quem distingue cada serviço é a **`family`** (`erp-prod-<servico>`) + o **log group** (`/erp/prod/<servico>`), não o nome do container. |
-| **`image`** | A URI da imagem no ECR (`:sha-<commit>`). **A mesma** em todos os 8 arquivos — muda só o `command`. |
+| **`name`** | Nome do container — **`core-api` em TODOS os 9 task defs** (uniforme de propósito). Como a imagem é a mesma e cada task tem 1 container, padronizar o nome faz o `imagedefinitions.json` que o CodeBuild emite (`{"name":"core-api",...}`) servir a **qualquer** serviço, e o `Image1ContainerName`/`ContainerName` do CodeDeploy bater sempre — sem gerar um artefato por serviço. Quem distingue cada serviço é a **`family`** (`erp-prod-<servico>`) + o **log group** (`/erp/prod/<servico>`), não o nome do container. |
+| **`image`** | A URI da imagem no ECR (`:sha-<commit>`). **A mesma** em todos os 9 arquivos — muda só o `command`. |
 | **`essential: true`** | Se este container morre, a task inteira é considerada falha (e reiniciada). Como há 1 container por task, é sempre `true`. |
 | **`entryPoint` + `command`** | **O coração da tradução "uma imagem, N papéis".** A **API não os declara** → usa o `ENTRYPOINT` da imagem (`tini -- node src/server.ts`). Cada **worker/job** sobrescreve `entryPoint: ["tini","--","node"]` (mantém `tini` como PID 1 + reaping de zumbis + forward de SIGTERM) e passa o `run.ts` em `command`. |
 | **`environment`** | Variáveis **não-secretas** (drivers `=mysql`, `NODE_ENV`, host SMTP do SES, etc.). Vão em **texto** no JSON — nunca ponha segredo aqui. |
@@ -129,6 +129,7 @@ são o canal de observabilidade — daí todo worker/job manter o `logConfigurat
 | [`contract-count-projection.taskdef.json`](taskdefs/contract-count-projection.taskdef.json) | `src/workers/contract-count-projection/run.ts` | worker | ❌ | **1** | `CONTRACTS_DATABASE_URL`, `PARTNERS_DATABASE_URL` |
 | [`migrate.taskdef.json`](taskdefs/migrate.taskdef.json) | `src/jobs/migrate/run.ts` | **job** one-shot | ❌ | — (RunTask **antes** dos Services) | `MIGRATE_DATABASE_URL` |
 | [`sweeper.taskdef.json`](taskdefs/sweeper.taskdef.json) | `src/jobs/contracts/sweeper/run.ts` | **job** cron | ❌ | — (1×/dia via EventBridge Scheduler) | `CONTRACTS_DATABASE_URL` |
+| [`supplier-view-backfill.taskdef.json`](taskdefs/supplier-view-backfill.taskdef.json) | `src/jobs/financial/supplier-view-backfill/run.ts` | **job** one-shot | ❌ | — (RunTask manual / sob demanda; idempotente) | `PARTNERS_DATABASE_URL`, `FINANCIAL_DATABASE_URL` |
 
 > Fonte canônica de `command`/env/secrets: [`compose.yaml`](../../../core-api/compose.yaml)
 > (service `http` + profiles `workers`/`jobs`) e o catálogo verificado
@@ -144,7 +145,7 @@ são o canal de observabilidade — daí todo worker/job manter o `logConfigurat
   **1 réplica** — a projeção/dispatch **não é idempotente sob concorrência** hoje. Escalar
   exige cuidado (ou tornar idempotente antes).
 
-### Os dois jobs (`migrate`, `sweeper`) — uma nota importante
+### Os três jobs (`migrate`, `sweeper`, `supplier-view-backfill`) — uma nota importante
 
 Uma Task Definition **não** codifica "one-shot" — isso é **como** ela é executada. Os
 jobs **não viram ECS Service** (que manteria N réplicas vivas para sempre). Eles rodam
@@ -155,6 +156,10 @@ via **`aws ecs run-task`** (ou um step do pipeline / EventBridge Scheduler):
   ausente, `1` = erro de runtime.
 - **`sweeper`** — auto-expire de contratos; agendado **1×/dia** (00:05 America/Sao_Paulo)
   via EventBridge Scheduler chamando `RunTask`. `SWEEP_BATCH_SIZE` controla o lote.
+- **`supplier-view-backfill`** — repopula o read-model `fin_supplier_view` a partir dos
+  fornecedores existentes no `partners` (US2 #47). Disparado **sob demanda** via `RunTask`
+  (não agendado); **idempotente** — re-rodar é seguro. Exit `0` = ok, `78` =
+  `PARTNERS_DATABASE_URL`/`FINANCIAL_DATABASE_URL` ausente, `1` = ao menos uma projeção falhou.
 
 ---
 
@@ -168,6 +173,7 @@ via **`aws ecs run-task`** (ou um step do pipeline / EventBridge Scheduler):
 | **outbox-contracts / outbox-partners** | `256` | `512` | Loop de poll + entrega de evento; leve. A vazão vem de **escalar réplicas** (SKIP LOCKED), não de CPU por task. |
 | **supplier-projection / contract-count-projection** | `256` | `512` | Projeção de read-model: ler outbox de um módulo, gravar view de outro. Leve, 1 réplica. |
 | **sweeper** | `256` | `512` | Job curto: 1 query em lote + UPDATE. One-shot. |
+| **supplier-view-backfill** | `256` | `512` | Job one-shot: lista fornecedores do `partners` e popula `fin_supplier_view` no `financial`. Leve, I/O-bound; idempotente, roda sob demanda (não no deploy). |
 
 > Combinações **válidas no Fargate** (`256` aceita 512/1024/2048; `512` aceita
 > 1024–4096). Estes são **pontos de partida conservadores** — ajustar com base em
