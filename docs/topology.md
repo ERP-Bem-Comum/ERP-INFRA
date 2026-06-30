@@ -17,16 +17,17 @@ flowchart TB
     Internet(("🌐 Internet"))
     Internet --> LB
 
-    subgraph PUB["Camada pública (única exposição externa)"]
+    subgraph PUB["Barramento público — HTTPS :443 (TLS + WAF) · expõe web-app E core-api"]
         LB["⚖️ Load Balancer<br/>TLS + WAF (regras OWASP)"]
         WEB["🚪 web-app<br/>TanStack Start (Node 24 · Nitro)<br/>Front (SSR) + BFF no mesmo processo<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
         LB --> WEB
     end
 
+    LB -- "HTTPS :443<br/>/api/* — core-api TAMBÉM é público no barramento" --> CORE
     WEB -- "server functions (BFF)<br/>/api/v2/* via HTTP interno" --> CORE
 
-    subgraph INT["Camada interna (VPC privada)"]
-        CORE["⭐ core-api<br/>Node 24 LTS · Fastify<br/>Modular Monolith<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
+    subgraph INT["Aplicação — subnets privadas (tasks rodam atrás do LB)"]
+        CORE["⭐ core-api<br/>Node 24 LTS · Fastify<br/>Modular Monolith<br/>Exposto via LB (HTTPS) + chamado pelo BFF<br/>Stateless · ≥2 réplicas<br/>512 MB / 0.5 vCPU"]
     end
 
     CORE --> DB
