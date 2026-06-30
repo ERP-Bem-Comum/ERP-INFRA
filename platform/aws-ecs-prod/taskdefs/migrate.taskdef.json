@@ -1,0 +1,72 @@
+{
+  "family": "erp-prod-migrate",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-ecs-execution",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-job-task",
+  "containerDefinitions": [
+    {
+      "name": "migrate",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
+      "essential": true,
+      "entryPoint": [
+        "tini",
+        "--",
+        "node"
+      ],
+      "command": [
+        "src/jobs/migrate/run.ts"
+      ],
+      "environment": [
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "MIGRATE_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/MIGRATE_DATABASE_URL"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/erp/prod/migrate",
+          "awslogs-region": "<REGIAO>",
+          "awslogs-stream-prefix": "job"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Environment",
+      "value": "prod"
+    },
+    {
+      "key": "Service",
+      "value": "migrate"
+    },
+    {
+      "key": "Type",
+      "value": "job"
+    },
+    {
+      "key": "Owner",
+      "value": "infra"
+    },
+    {
+      "key": "Repo",
+      "value": "ERP-INFRA"
+    }
+  ]
+}
