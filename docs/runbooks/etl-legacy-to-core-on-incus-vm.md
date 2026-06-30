@@ -157,7 +157,9 @@ Confirmado no `core`: `par_collaborators=86`, `par_suppliers=17`, `auth_user=13`
   `payment_detail varchar(255) YES NULL`. A migration `0026` foi aplicada pelo `job:migrate`.
 - ✅ **Stack acessível:** `core-api` responde `/health` 200; `web` healthy atrás do Caddy.
 - ✅ **ETL legado→core executado** (F3.3): 86 collaborators, 17 suppliers, 12 users migrados para o `core`; achados de dados registrados (issues #274, #275).
-- 🟡 **E2E HTTP do `paymentDetail`**: `POST /api/v2/auth/login` → **200** (auth real ok); `POST /api/v2/financial/documents` → **403** correto (o admin do `AUTH_SEED_JSON` não tem `fiscal-document:write`). Validar o create exige conceder a permissão (decisão do dono — não fazer auto-grant de RBAC). A coluna/feature já estão provadas via schema + pipeline W0–W3.
+- ✅ **E2E HTTP do `paymentDetail` (feature #273) — GREEN no MySQL real:**
+  - `POST /api/v2/auth/login` → 200; `POST /api/v2/financial/documents` (com `paymentDetail`) → **201** (`status: Open`); `GET /documents/:id` → `paymentDetail` retornado **idêntico**. O favorecido é um **supplier migrado pelo ETL** (`supplierRef` real do legado) — valida feature + dados migrados juntos.
+  - ⚠️ O admin do `AUTH_SEED_JSON` não tem permissão financeira → `POST` dava **403** (RBAC correto). Em vez de auto-grant no banco, **adicionou-se um 2º user ao `AUTH_SEED_JSON`** do override com `fiscal-document:read|write|cancel` (+ `supplier:read`, `bank-account:read`, `reference:read`) e recriou-se o core-api (`docker compose up -d --force-recreate core-api`). **Recomendação p/ a Infra:** dar ao admin do seed local as permissões financeiras (hoje faltam) para E2E completo out-of-the-box.
 - ✅ **Acesso ao front** via **SSH port-forward** (não precisa proxy/tailscale na VM; o incus proxy de VM exige IP estático/NAT, inviável aqui):
   ```bash
   # no laptop (tailnet), deixar rodando:
