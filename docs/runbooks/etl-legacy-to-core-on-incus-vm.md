@@ -156,9 +156,18 @@ Confirmado no `core`: `par_collaborators=86`, `par_suppliers=17`, `auth_user=13`
 - ✅ **Schema da feature 027 no MySQL real:** `DESCRIBE core.fin_documents` →
   `payment_detail varchar(255) YES NULL`. A migration `0026` foi aplicada pelo `job:migrate`.
 - ✅ **Stack acessível:** `core-api` responde `/health` 200; `web` healthy atrás do Caddy.
-- ✅ **ETL legado→core executado** (F3.3): 86 collaborators, 17 suppliers, 12 users migrados para o `core`; achados de dados registrados.
-- ⏳ **E2E HTTP do `paymentDetail`** (login → criar documento com `paymentDetail` → GET detalhe) — pendente.
-- ⏳ **Acesso externo do front** (`https://app.localhost`) — expor via tailscale/proxy na VM (a fazer).
+- ✅ **ETL legado→core executado** (F3.3): 86 collaborators, 17 suppliers, 12 users migrados para o `core`; achados de dados registrados (issues #274, #275).
+- 🟡 **E2E HTTP do `paymentDetail`**: `POST /api/v2/auth/login` → **200** (auth real ok); `POST /api/v2/financial/documents` → **403** correto (o admin do `AUTH_SEED_JSON` não tem `fiscal-document:write`). Validar o create exige conceder a permissão (decisão do dono — não fazer auto-grant de RBAC). A coluna/feature já estão provadas via schema + pipeline W0–W3.
+- ✅ **Acesso ao front** via **SSH port-forward** (não precisa proxy/tailscale na VM; o incus proxy de VM exige IP estático/NAT, inviável aqui):
+  ```bash
+  # no laptop (tailnet), deixar rodando:
+  ssh -N -L 8443:10.10.10.41:443 x99
+  # /etc/hosts (uma vez):
+  echo "127.0.0.1 app.localhost api.localhost" | sudo tee -a /etc/hosts
+  # abrir (aceitar a CA interna do Caddy — ERP-INFRA/local/root.crt):
+  #   https://app.localhost:8443   · login admin@bemcomum.dev / DevPassw0rd!2024
+  ```
+  Testado: SNI `app.localhost` + Host com porta → Caddy roteia (HTTP 307 → login).
 
 ---
 
