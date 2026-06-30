@@ -97,7 +97,7 @@ Use o [`api.taskdef.json`](taskdefs/api.taskdef.json) como referência ao ler.
 
 | Campo | O que é / por que importa |
 |---|---|
-| **`name`** | Nome do container. É o **alvo da injeção de imagem** do CodeDeploy (`Image1ContainerName`) e o que aparece no log stream. |
+| **`name`** | Nome do container — **`core-api` em TODOS os 8 task defs** (uniforme de propósito). Como a imagem é a mesma e cada task tem 1 container, padronizar o nome faz o `imagedefinitions.json` que o CodeBuild emite (`{"name":"core-api",...}`) servir a **qualquer** serviço, e o `Image1ContainerName`/`ContainerName` do CodeDeploy bater sempre — sem gerar um artefato por serviço. Quem distingue cada serviço é a **`family`** (`erp-prod-<servico>`) + o **log group** (`/erp/prod/<servico>`), não o nome do container. |
 | **`image`** | A URI da imagem no ECR (`:sha-<commit>`). **A mesma** em todos os 8 arquivos — muda só o `command`. |
 | **`essential: true`** | Se este container morre, a task inteira é considerada falha (e reiniciada). Como há 1 container por task, é sempre `true`. |
 | **`entryPoint` + `command`** | **O coração da tradução "uma imagem, N papéis".** A **API não os declara** → usa o `ENTRYPOINT` da imagem (`tini -- node src/server.ts`). Cada **worker/job** sobrescreve `entryPoint: ["tini","--","node"]` (mantém `tini` como PID 1 + reaping de zumbis + forward de SIGTERM) e passa o `run.ts` em `command`. |

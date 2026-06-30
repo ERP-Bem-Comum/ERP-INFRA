@@ -14,7 +14,7 @@
   "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-worker-task",
   "containerDefinitions": [
     {
-      "name": "supplier-projection",
+      "name": "core-api",
       "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
       "essential": true,
       "entryPoint": [

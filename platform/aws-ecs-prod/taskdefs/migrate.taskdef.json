@@ -14,7 +14,7 @@
   "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-job-task",
   "containerDefinitions": [
     {
-      "name": "migrate",
+      "name": "core-api",
       "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
       "essential": true,
       "entryPoint": [
