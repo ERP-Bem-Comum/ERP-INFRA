@@ -1,0 +1,39 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - docker.io
+  - docker-compose-v2
+  - rsync
+  - unattended-upgrades
+  - ufw
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-erp-qa.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  - path: /etc/systemd/journald.conf.d/99-erp-qa.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=200M
+      RuntimeMaxUse=100M
+
+runcmd:
+  - [bash, -lc, "fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab"]
+  - [bash, -lc, "sysctl vm.swappiness=20"]
+  - [bash, -lc, "echo 'vm.swappiness=20' > /etc/sysctl.d/99-erp-qa.conf"]
+  - [bash, -lc, "systemctl enable --now docker"]
+  - [bash, -lc, "usermod -aG docker ubuntu"]
+  - [bash, -lc, "ufw default deny incoming && ufw default allow outgoing && ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable"]
+  - [bash, -lc, "sshd -t && systemctl restart ssh"]
+  - [bash, -lc, "systemctl restart systemd-journald"]
+  - [bash, -lc, "mkdir -p /opt/erp-qa/backups && chown -R ubuntu:ubuntu /opt/erp-qa"]
+
+final_message: "VM de QA preparada. Copie platform/vps-qa para /opt/erp-qa e carregue as imagens."

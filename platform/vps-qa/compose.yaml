@@ -149,6 +149,169 @@ services:
     networks:
       - internal
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Workers long-running — 5 processos que processam o outbox e mantêm
+  # as projeções de read-model. Cada worker usa a MESMA imagem do core-api
+  # (buildada no CI, publicada no ghcr) e roda um script .ts diferente.
+  #
+  # Padrão de injeção de DATABASE_URL: idêntico ao core-api — lê mysql_app_password
+  # do secret file e constrói a URL inline. Banco único `core` (ADR-0020): todas as
+  # *_DATABASE_URL apontam para mysql:3306/core (sem isolamento de schema em QA).
+  #
+  # depends_on: core-api healthy (garante transitivamente MySQL healthy + migrations
+  # concluídas via core-api-migrate). Sem healthcheck HTTP (workers são long-running
+  # sem borda HTTP — Docker os considera "running" assim que o processo não crasha).
+  #
+  # Nota de memória (VPS BV1-2-10, 2 GB RAM + 2 GB swap): os 5 workers somam ~960 MB
+  # de mem_limit (4×192 m + 1×256 m) além do baseline (mysql+core-api+web+caddy ≈1608 m),
+  # totalizando ~2568 MB. Dentro da RAM+swap (4 GB total), mas headroom reduzido.
+  # Monitorar com `docker stats --no-stream`.
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  core-api-outbox-contracts:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export CONTRACTS_DATABASE_URL="$${DB_URL}"
+        exec node src/modules/contracts/worker/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+    mem_limit: 192m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api-outbox-partners:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export PARTNERS_DATABASE_URL="$${DB_URL}"
+        exec node src/modules/partners/worker/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+    mem_limit: 192m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api-supplier-projection:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export PARTNERS_DATABASE_URL="$${DB_URL}"
+        export FINANCIAL_DATABASE_URL="$${DB_URL}"
+        exec node src/workers/supplier-view-projection/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+    mem_limit: 192m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api-contract-count-projection:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export CONTRACTS_DATABASE_URL="$${DB_URL}"
+        export PARTNERS_DATABASE_URL="$${DB_URL}"
+        exec node src/workers/contract-count-projection/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+    mem_limit: 192m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  core-api-email-dispatch:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        DB_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        export AUTH_DATABASE_URL="$${DB_URL}"
+        export PARTNERS_DATABASE_URL="$${DB_URL}"
+        if [ -s /run/secrets/smtp_pass ]; then export SMTP_PASS="$$(cat /run/secrets/smtp_pass)"; fi
+        exec node src/workers/email-dispatch/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+      EMAIL_PROVIDER: smtp
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      # Amazon SES via SMTP (sandbox em QA — destinatários verificados).
+      # Configurar SMTP_HOST=email-smtp.<região>.amazonaws.com no .env.
+      # Sem SMTP_HOST/USER → Nodemailer no-op (worker sobe mas não envia e-mail).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    secrets:
+      - mysql_app_password
+      - smtp_pass
+    mem_limit: 256m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
   # Front + BFF (TanStack Start). Borda pública via Caddy; consome o core-api na rede
   # interna (CORE_API_URL). Boot exige só CORE_API_URL (ver src/external/config/env.config.ts).
   web:
@@ -199,6 +362,38 @@ services:
       web:
         condition: service_healthy
     mem_limit: 72m
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  # Job one-shot — expira contratos vencidos (src/jobs/contracts/sweeper/run.ts).
+  # O agendamento (1×/dia, 00:05 America/Sao_Paulo) é EXTERNO a este compose:
+  # um systemd timer ou ofelia na VPS dispara `docker compose run --rm core-api-sweeper`.
+  # Este service apenas define imagem + entrypoint; NÃO é iniciado pelo `compose up`
+  # (profile "sweeper" opt-in). restart: "no" — one-shot puro; retry = próximo tick do cron.
+  core-api-sweeper:
+    image: ${CORE_API_IMAGE:?defina CORE_API_IMAGE}
+    restart: "no"
+    profiles:
+      - sweeper
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MYSQL_APP_PASSWORD="$$(cat /run/secrets/mysql_app_password)"
+        export CONTRACTS_DATABASE_URL="mysql://core_app:$${MYSQL_APP_PASSWORD}@mysql:3306/core"
+        exec node src/jobs/contracts/sweeper/run.ts
+    environment:
+      NODE_OPTIONS: --experimental-strip-types --no-warnings --max-old-space-size=128
+    depends_on:
+      mysql:
+        condition: service_healthy
+      core-api-migrate:
+        condition: service_completed_successfully
+    secrets:
+      - mysql_app_password
+    mem_limit: 192m
     logging: *logging
     security_opt:
       - no-new-privileges:true

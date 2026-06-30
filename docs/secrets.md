@@ -73,9 +73,10 @@ Formato esperado: `mysql://user:password@host:3306/database?ssl-mode=REQUIRED`
 | `TS_OAUTH_SECRET` | Secret do OAuth client (escopo auth-keys + `tag:ci`) | GitHub Secrets (repo web-app) | conforme política |
 
 > **Sem chave SSH longeva** (web-app ADR-0018): o deploy de QA usa **Tailscale SSH** (identidade via ACL
-> `tag:ci` → `ubuntu@erp-bem-comum-qa`). Quando a prod migrar para AWS gerenciado (gatilhos do ADR-0002), o
-> deploy passa a usar **GitHub OIDC→AWS** (assume-role, credencial efêmera) — sem secret longevo no repo.
-> No baseline atual (Lightsail single-node, ADR-0002), o deploy é por **script versionado** na instância.
+> `tag:ci` → `ubuntu@erp-bem-comum-qa`). A **prod em AWS ECS** ([ADR-0003](adr/0003-producao-aws-ecs.md))
+> usa **CodePipeline → CodeBuild → CodeDeploy** com papéis IAM — sem chave SSH nem secret longevo de deploy
+> no repo; os segredos de runtime ficam no **Secrets Manager** e o e-mail usa **Amazon SES (SMTP)**. O
+> baseline econômico single-node em Lightsail (ADR-0002) foi descartado.
 
 ---
 

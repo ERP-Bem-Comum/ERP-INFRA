@@ -10,9 +10,11 @@
 
 | Ambiente | Propósito | Dados | Acesso | Status provisionamento |
 |---|---|---|---|---|
-| `dev` | Desenvolvimento local + CI | Sintéticos / anonimizados | Time de dev (total) | 🔵 a provisionar |
-| `staging` | Pré-produção, ensaios de release | Dump anonimizado de prod | Dev + QA + P.O. | 🔵 a provisionar |
-| `prod` | Produção | Reais | Operação restrita | 🔵 a provisionar |
+| `dev` | Desenvolvimento local + CI | Sintéticos / anonimizados | Time de dev (total) | 🟢 Compose local disponível |
+| `x99` | Sandbox interno de validação (VM `incus` no homelab) — equivale a um "dev avançado" | Sintéticos | Time de dev / infra | 🟢 Docker Compose na VM; validação ETL legado→core executada |
+| `qa` | Homologação funcional econômica (PBE) | Sintéticos / anonimizados | Dev + QA + P.O. | 🟡 VPS Magalu (IaC + runbook prontos; a validar) |
+| `staging` | Pré-produção, ensaios de release (espelha prod) | Dump anonimizado de prod | Dev + QA + P.O. | 🔵 a provisionar |
+| `prod` | Produção (alta disponibilidade) | Reais | Operação restrita | 🟢 **AWS ECS** (ELB + múltiplas tasks da API + RDS) |
 
 🔵 = planejado · 🟢 = provisionado e validado · 🔴 = divergência
 
@@ -21,6 +23,10 @@
 ## 2. Princípio do espelhamento
 
 > **Staging deve ter a MESMA topologia que prod.** Sem exceção.
+
+`qa` não é `staging`. O QA inicial pode ser single-node, sem HA e menor que
+produção para acelerar validação funcional. Ele não serve para validar
+concorrência, failover, performance, RPO/RTO de produção ou comportamento sob HA.
 
 Sem negociação:
 
@@ -53,7 +59,8 @@ flowchart LR
 
 | Promoção | Trigger | Aprovação |
 |---|---|---|
-| `dev` → `staging` | PR aprovado em `main` do serviço | Automática via CI/CD |
+| `dev` → `qa` | Imagem versionada do serviço | Manual no bootstrap inicial |
+| `qa` → `staging` | Release candidata validada funcionalmente | Automática quando o pipeline existir |
 | `staging` → `prod` | Tag de release + janela de deploy | Manual (release manager) |
 
 > ❌ **Nunca** deploy direto de `dev` para `prod`.
@@ -97,6 +104,15 @@ Dump de produção é **anonimizado** antes de ser carregado em staging:
 - Reset/recreate frequente é OK
 - Banco rodando localmente via [`../local/docker-compose.yml`](../local/docker-compose.yml)
 
+### 6.1.1. `x99`
+
+- **Sandbox interno** numa VM `incus` no homelab — Docker Compose, **dados sintéticos**
+- Equivale a um "dev avançado / validação": exercita a stack completa
+  (API + 5 workers + MySQL) num ambiente isolado
+- Usado para validação end-to-end (ex.: ETL legado→core) antes de promover
+- Descartável; recriar do zero é o plano de recuperação
+- Dimensionamento: ver [`../runbooks/deploy-and-operations.md`](../runbooks/deploy-and-operations.md) §5
+
 ### 6.2. `staging`
 
 - Dev: leitura + deploy via pipeline
@@ -104,23 +120,44 @@ Dump de produção é **anonimizado** antes de ser carregado em staging:
 - P.O.: acesso para validação de UAT
 - Acesso direto ao banco: leitura apenas (via user `readonly_bi`)
 
+### 6.2.1. `qa`
+
+- Ambiente econômico e descartável para homologação funcional
+- VPS criada: `BV1-2-20`, Ubuntu 24.04, `br-ne1-a`
+- Somente Caddy publica `80/443`; SSH restrito ao IP administrativo
+- MySQL local na VPS; anexos devem usar Object Storage externo
+- Runbook: [`../platform/vps-qa/README.md`](../platform/vps-qa/README.md)
+- Limites conhecidos: sessões, JWT e parte do domínio ainda possuem estado volátil
+
 ### 6.3. `prod`
 
 - **Acesso restrito** a um pequeno time de operação
-- Mudanças via pipeline — **nunca** SSH/manual
+- Roda em **AWS ECS** (alta disponibilidade): **ELB** + múltiplas tasks da API;
+  banco **RDS** gerenciado; segredos no **Secrets Manager** (ver
+  [`ADR-0003`](adr/0003-producao-aws-ecs.md))
+- Mudanças **somente via CI/CD** (CodePipeline → CodeBuild → CodeDeploy); nunca
+  editar Task Definition, banco ou configuração ad hoc no console
+- A infra **traduz o `compose.yaml` do core-api** em ECS: 1 Task Definition +
+  1 ECS Service por service (a API fica atrás do ELB; os 5 workers do profile
+  `workers` são ECS Services **sem ELB**)
 - Acesso ao banco: emergência apenas, com auditoria, via break-glass procedure (a definir pela infra + security)
+- Documentos em **S3** (ADR-0019); e-mail via **Amazon SES (SMTP)**
+- Detalhes específicos (conta, região, cluster ECS, ARNs) — **a confirmar com o time de infra**
 
 ---
 
 ## 7. SLAs internos
 
-| Item | dev | staging | prod |
-|---|---|---|---|
-| Disponibilidade | Best effort | 99% | 99.9% |
-| RPO (Recovery Point) | 1 dia | 4 horas | 15 minutos |
-| RTO (Recovery Time) | 4 horas | 1 hora | 30 minutos |
+| Item | dev | x99 | qa | staging | prod |
+|---|---|---|---|---|---|
+| Disponibilidade | Best effort | Best effort | Best effort | 99% | **99,9%** |
+| RPO (Recovery Point) | 1 dia | n/a (descartável) | 24 horas | 4 horas | **15 minutos** |
+| RTO (Recovery Time) | 4 horas | n/a (descartável) | 4 horas | 1 hora | **30 minutos** |
 
-> Valores conservadores iniciais. Revisar após primeiros 3 meses em prod.
+> Os valores de produção são o alvo de **alta disponibilidade** entregue pelo
+> AWS ECS ([ADR-0003](adr/0003-producao-aws-ecs.md)): ELB + múltiplas tasks da
+> API + RDS gerenciado (backup/PITR). A antiga exceção econômica single-node
+> (ADR-0002) foi descartada.
 
 ---
 

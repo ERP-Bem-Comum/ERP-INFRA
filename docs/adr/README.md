@@ -9,6 +9,8 @@ ADRs registram **decisões arquiteturais** específicas do repo `ERP-INFRA`. Nã
 | Nº | Título | Status |
 |---|---|---|
 | [0001](0001-proposito-e-stewardship-do-erp-infra.md) | Propósito e stewardship do repositório `ERP-INFRA` | ✅ Aceita |
+| [0002](0002-producao-economica-aws-lightsail.md) | Produção econômica inicial em AWS Lightsail | ❌ Superseded por ADR-0003 |
+| [0003](0003-producao-aws-ecs.md) | Produção em AWS ECS | ✅ Aceito |
 
 ## Como adicionar uma ADR
 

@@ -18,7 +18,7 @@
 
 ## Índice rápido
 
-- **Subir:** [§3 dev local](#3-subir-a-aplicação) · [§4 QA (CI/CD)](#4-qa--cicd-o-jeito-normal) · [§5 prod](#5-prod-lightsail-interino)
+- **Subir:** [§3 dev local](#3-subir-a-aplicação) · [§4 QA (CI/CD)](#4-qa--cicd-o-jeito-normal) · [§5 prod (AWS ECS)](#5-prod-aws-ecs)
 - **Verificar:** [§6 smoke checks](#6-verificação-pós-deploy-smoke-checks)
 - **Quando algo quebra (RBs):** [RB-001 login "server"](#rb-001--login-falha-com-algo-deu-errado--error-server) · [RB-002 deploy vermelho](#rb-002--deploy-ci-vermelho) · [RB-003 boot crash](#rb-003--container-crasha-no-boot) · [RB-004 /ready 503](#rb-004--ready-retorna-503) · [RB-005 core-api 5xx](#rb-005--core-api-authlogin-5xx) · [RB-006 disco cheio](#rb-006--vps-sem-disco) · [RB-007 rollback](#rb-007--rollback) · [RB-008 rotação de key](#rb-008--rotação-da-auth-key-do-tailnet)
 - **Manutenção:** [§11 rotação de segredos](#11-rotação-de-segredos-prazos) · [§12 escalonamento](#12-escalonamento) · [§13 melhoria contínua](#13-melhoria-contínua--automação)
@@ -44,7 +44,7 @@
 | `gh` autenticado (GitHub) | rodar/ver CI, PRs, secrets | `gh auth login` (org `ERP-Bem-Comum`) |
 | **Tailscale** no seu dispositivo | alcançar a VPS QA (rede privada) | entrar no tailnet `tailf5e6ca.ts.net`; p/ SSH manual à VPS é preciso a regra `autogroup:admin → tag:cd-target` na ACL |
 | Docker local | subir o stack dev | Docker Desktop |
-| Console Magalu / AWS Lightsail | ver/operar a VPS | credenciais da cloud (Infra) |
+| Console Magalu (QA) / AWS (prod: ECS, RDS, Secrets Manager, CodePipeline) | ver/operar os ambientes | credenciais da cloud (Infra) |
 | Secret Manager / acesso aos `./secrets` | valores de segredo | Infra |
 
 ---
@@ -63,9 +63,10 @@
 | Ambiente | Host | Sobe via | Imagem web |
 |---|---|---|---|
 | dev local | sua máquina | `ERP-INFRA/local/up.sh` | build local |
+| **x99** | VM `incus` no homelab (sandbox de validação) | Docker Compose na VM | build/pull local |
 | **QA** | VPS Magalu `erp-bem-comum-qa` (`201.23.88.74`, 10 GB) | **CI/CD** (push `develop`) | `ghcr.io/.../bemcomum-web:qa` |
-| prod (interino) | AWS **Lightsail** single-node (ADR-0002) | `deploy.sh` (script) | `:sha-<commit>` |
-| prod (atual) | `erp-bem-comum.codebit.biz` (+ `…-api…`) | Codebit | — |
+| **prod** | AWS **ECS** (ELB + múltiplas tasks da API + RDS) — [ADR-0003](../adr/0003-producao-aws-ecs.md) | **CodePipeline → CodeBuild → CodeDeploy** | `:sha-<commit>` (ECR) |
+| prod (legado) | `erp-bem-comum.codebit.biz` (+ `…-api…`) | Codebit | — |
 
 Imagem web = **Chainguard/Wolfi**, non-root, `.output` do Nitro (web-app ADR-0015). Ambiente **nunca compila** — só puxa.
 
@@ -96,9 +97,65 @@ do GitHub **só disparam da branch default `main`** — como os workflows vivem 
 ou os workflows forem pra `main`.
 ⚠️ o **core-api** tem pipeline/imagem própria; o `deploy.sh` puxa **as duas** — garanta que ele também publicou.
 
-## 5. Prod (Lightsail, interino — ADR-0002)
-Imagens por digest/tag imutável, `deploy.sh` versionado (ver `platform/aws-lightsail-prod/README.md`).
-⚠️ **antes de subir o web-app:** `CORE_API_URL` deve terminar em `/api/v2` (o guard de boot derruba o container se errado — fail-loud).
+## 5. Prod (AWS ECS)
+
+Produção roda em **AWS ECS** (alta disponibilidade — [ADR-0003](../adr/0003-producao-aws-ecs.md)).
+Não há `docker compose` nem VPS em prod: a infra **traduz o `compose.yaml` do
+core-api** (branch `main`) em **1 Task Definition + 1 ECS Service por service**
+(mesma imagem do ECR, `command` sobrescrito). A **API** (`http`) fica atrás do
+**ELB**; **`mysql`→RDS**, **edge/Caddy→ELB**, **secrets-file→Secrets Manager**.
+
+### Fluxo de deploy (CI/CD)
+
+```
+push em main → CodePipeline
+  → CodeBuild  : docker build → push da imagem para o ECR (tag :sha-<commit>)
+  → CodeDeploy : task one-shot `migrate` (aplica o schema) → registra a nova
+                 Task Definition → atualiza cada ECS Service (API + workers)
+```
+
+- Imagens são **imutáveis** por `:sha-<commit>` no ECR. **Rollback** = re-promover
+  a Task Definition anterior (ou apontar o Service para a tag `:sha` boa).
+- ⚠️ **antes de promover o web-app:** `CORE_API_URL` deve terminar em `/api/v2`
+  (o guard de boot derruba o container se errado — fail-loud).
+- ⚠️ **migrations fora do boot:** a task `migrate` (`src/jobs/migrate/run.ts`) roda
+  **antes** de atualizar os Services — API/workers já sobem com o schema migrado.
+
+> **Os 5 serviços do profile `workers`** (`outbox-contracts`, `outbox-partners`,
+> `supplier-projection`, `contract-count-projection`, `email-dispatch`) **fazem
+> parte da produção** — cada um vira **1 ECS Service, sem ELB** (não têm porta
+> HTTP). Os workers de outbox (`outbox-contracts`, `outbox-partners`) usam
+> `FOR UPDATE SKIP LOCKED`, então escalam horizontalmente (N réplicas) **sem
+> duplicar evento**; as projeções e o `email-dispatch` rodam com 1 réplica.
+
+### Dimensionamento por ambiente
+
+A planta é única (`core-api/compose.yaml`); o que muda por ambiente é só
+dimensionamento/config. Overrides pequenos materializam isso:
+[`local/compose.x99.yaml`](../../local/compose.x99.yaml) (x99) e
+[`platform/vps-qa/compose.qa.yaml`](../../platform/vps-qa/compose.qa.yaml) (qa).
+
+| Item | x99 (incus) | qa (Magalu) | prod (AWS ECS) |
+|---|---|---|---|
+| Réplicas da API (`http`) | 1 | 1 | **2+** (atrás do **ELB**) |
+| `outbox-contracts` | 1 | 0–1¹ | **2+** (`SKIP LOCKED`) |
+| `outbox-partners` | 1 | 0–1¹ | **2+** (`SKIP LOCKED`) |
+| `supplier-projection` | 1 | 0–1¹ | 1 |
+| `contract-count-projection` | 1 | 0–1¹ | 1 |
+| `email-dispatch` | 1 | 0–1¹ | 1 |
+| Banco | container `mysql:8.4` | container `mysql:8.4` | **RDS** (MySQL gerenciado) |
+| Secrets | arquivo `./secrets/*.txt` | arquivo `./secrets/*` | **Secrets Manager** |
+| `SMTP_HOST` | `mailpit` | SES sandbox (`email-smtp.<reg>.amazonaws.com`) | **`email-smtp.<reg>.amazonaws.com`** (Amazon SES) |
+
+> ¹ O baseline atual da VPS de QA sobe **0 workers** (eventos cross-módulo
+> acumulam até habilitar — ver `platform/vps-qa/README.md`). O override
+> `compose.qa.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
+>
+> **E-mail em prod = Amazon SES via SMTP** (`EMAIL_PROVIDER=smtp`,
+> `SMTP_HOST=email-smtp.<região>.amazonaws.com`), **não** Umbler/Resend. O
+> contrato de e-mail (ADR-0010) é o mesmo nos 3 ambientes; só muda host/credencial.
+>
+> Detalhes de prod (conta, região, cluster ECS, ARNs) — **a confirmar com o time de infra**.
 
 ---
 
@@ -212,7 +269,7 @@ curl -fsS $HOST/ready     # 200 {"status":"ready","checks":{"config":true,"coreA
 | `TS_AUTHKEY` | GitHub Secrets (web-app) | **2026-09-23** (issue #92) | [RB-008](#rb-008--rotação-da-auth-key-do-tailnet) |
 | `AUTH_JWT_PRIVATE/PUBLIC_KEY` | Secret Manager | trimestral / comprometimento | gerar par ES256 → rotacionar → invalidar sessões |
 | Senhas de DB (`*_DATABASE_URL`) | Secret Manager / Docker secret | trimestral | rotacionar no MySQL → atualizar secret → reiniciar |
-| `SMTP_PASS` / `RESEND_API_KEY` | Secret Manager | conforme provedor | atualizar secret → reiniciar |
+| `SMTP_PASS` (prod = Amazon SES) | Secrets Manager | conforme provedor | atualizar secret → reiniciar |
 
 Regra: segredo **nunca** em git/imagem/log.
 
@@ -222,7 +279,7 @@ Regra: segredo **nunca** em git/imagem/log.
 |---|---|---|
 | Build / app / web-app (BFF) / contratos de erro | **Tech Lead (web-app)** | issue no repo `web-app` |
 | core-api (login 5xx, DB, JWT, migrations) | **Time do core-api** | issue no repo `core-api` |
-| VPS / tailnet / ACL / secrets / disco / Lightsail | **Time de Infra** | issue no repo `ERP-INFRA` |
+| VPS QA / tailnet / ACL · AWS prod (ECS/RDS/ELB/Secrets Manager) / secrets / disco | **Time de Infra** | issue no repo `ERP-INFRA` |
 | Incidente em produção (usuários afetados) | acionar Tech Lead **e** Infra em paralelo | + registrar um RB novo no fim (§13) |
 
 > Sempre inclua o **`x-request-id`/reference-id** do erro ao escalar — é o que correlaciona tela ↔ log.
@@ -240,6 +297,6 @@ Regra: segredo **nunca** em git/imagem/log.
 
 ## 14. Referências
 - **[`env-and-secrets.reference.yaml`](../env-and-secrets.reference.yaml)** — catálogo de env/secrets (a referência).
-- [`topology.md`](../topology.md) · [`environments.md`](../environments.md) · [`secrets.md`](../secrets.md) · [`observability.md`](../observability.md) · [`adr/0002-…`](../adr/0002-producao-economica-aws-lightsail.md)
+- [`topology.md`](../topology.md) · [`environments.md`](../environments.md) · [`secrets.md`](../secrets.md) · [`observability.md`](../observability.md) · [`adr/0003 — Produção AWS ECS`](../adr/0003-producao-aws-ecs.md) (supersede [`adr/0002`](../adr/0002-producao-economica-aws-lightsail.md))
 - web-app: `.github/workflows/build-publish.yml` · ADRs 0014/0015/0016/0018/0019/0020 · **issue #92**.
 - core-api ao vivo: `GET /docs/json` (`NODE_ENV != production`).

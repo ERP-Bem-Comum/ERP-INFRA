@@ -1,0 +1,11 @@
+environment       = "qa"
+region            = "br-ne1"
+availability_zone = "br-ne1-a"
+machine_type      = "BV1-2-20"
+
+# Reutiliza a chave criada no painel. Alternativamente, remova ssh_key_name e
+# informe ssh_public_key com o conteúdo da chave pública, nunca a privada.
+ssh_key_name = "erp-bem-comum"
+
+# Descubra com: curl -4 https://ifconfig.me
+ssh_allowed_cidr = "203.0.113.10/32"
