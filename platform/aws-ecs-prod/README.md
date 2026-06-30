@@ -83,7 +83,7 @@ Use o [`api.taskdef.json`](taskdefs/api.taskdef.json) como referência ao ler.
 
 | Campo | O que é / por que importa |
 |---|---|
-| **`family`** | O **nome** da Task Definition. Cada `register` cria uma nova **revisão** (`family:1`, `family:2`, …); o Service aponta para uma revisão. Convenção aqui: `erp-prod-<servico>`. |
+| **`family`** | O **nome** da Task Definition. Cada `register` cria uma nova **revisão** (`family:1`, `family:2`, …); o Service aponta para uma revisão. Convenção aqui: `erp-prod-<servico>`. **O ECS Service correspondente usa o MESMO nome** — `erp-prod-<servico>` = family = log group `/erp/prod/<servico>` (api = `erp-prod-api`). Um só identificador correlaciona task def, service e logs. |
 | **`requiresCompatibilities: ["FARGATE"]`** | Roda em **Fargate** (serverless): a AWS gerencia o host; você não cuida de EC2. |
 | **`networkMode: "awsvpc"`** | Cada task ganha **sua própria ENI/IP** na VPC. É o que permite prendê-la a um security group e colocá-la em subnet privada (Camada 1 do `architecture-by-layer.md`). Obrigatório no Fargate. |
 | **`cpu` / `memory`** | Reserva de CPU (em unidades: `256` = 0.25 vCPU, `512` = 0.5, `1024` = 1) e RAM em MiB. **Combinações são fixas no Fargate** (ex.: cpu `256` aceita memory 512/1024/2048). Ver dimensionamento na §3. |

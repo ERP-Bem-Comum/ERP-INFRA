@@ -151,14 +151,14 @@ dimensionamento/config. Overrides pequenos materializam isso:
 | `email-dispatch` | 1 | 0–1¹ | 1 |
 | Banco | container `mysql:8.4` | container `mysql:8.4` | **RDS** (MySQL gerenciado) |
 | Secrets | arquivo `./secrets/*.txt` | arquivo `./secrets/*` | **Secrets Manager** |
-| `SMTP_HOST` | `mailpit` | SES sandbox (`email-smtp.<reg>.amazonaws.com`) | **`email-smtp.<reg>.amazonaws.com`** (Amazon SES) |
+| `SMTP_HOST` | `mailpit` | SES sandbox (`email-smtp.<REGIAO>.amazonaws.com`) | **`email-smtp.<REGIAO>.amazonaws.com`** (Amazon SES) |
 
 > ¹ O baseline atual da VPS de QA sobe **0 workers** (eventos cross-módulo
 > acumulam até habilitar — ver `platform/vps-qa/README.md`). O override
 > `compose.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
 >
 > **E-mail em prod = Amazon SES via SMTP** (`EMAIL_PROVIDER=smtp`,
-> `SMTP_HOST=email-smtp.<região>.amazonaws.com`), **não** Umbler/Resend. O
+> `SMTP_HOST=email-smtp.<REGIAO>.amazonaws.com`), **não** Umbler/Resend. O
 > contrato de e-mail (ADR-0010) é o mesmo nos 3 ambientes; só muda host/credencial.
 >
 > Detalhes de prod (conta, região, cluster ECS, ARNs) — **a confirmar com o time de infra**.
@@ -166,23 +166,23 @@ dimensionamento/config. Overrides pequenos materializam isso:
 ### 5.1 Comandos úteis (AWS CLI)
 
 > Linguagem: **AWS CLI**. Placeholders `<...>` (cluster, região) — **a confirmar com infra**.
-> Convenção dos nomes de Service: `core-api-http`, `core-api-outbox-contracts`,
-> `core-api-outbox-partners`, `core-api-supplier-projection`,
-> `core-api-contract-count-projection`, `core-api-email-dispatch`.
+> Convenção dos nomes de Service: `erp-prod-api`, `erp-prod-outbox-contracts`,
+> `erp-prod-outbox-partners`, `erp-prod-supplier-projection`,
+> `erp-prod-contract-count-projection`, `erp-prod-email-dispatch`.
 
 ```bash
 CLUSTER=<cluster_ecs>            # ex.: erp-prod — a confirmar com infra
-REGION=<região>                 # ex.: us-east-1
+REGION=<REGIAO>                 # ex.: us-east-1
 
 # Estado dos Services (running vs desired, deployment em andamento, eventos recentes)
 aws ecs describe-services --cluster "$CLUSTER" \
-  --services core-api-http core-api-outbox-contracts core-api-outbox-partners \
-             core-api-supplier-projection core-api-contract-count-projection core-api-email-dispatch \
+  --services erp-prod-api erp-prod-outbox-contracts erp-prod-outbox-partners \
+             erp-prod-supplier-projection erp-prod-contract-count-projection erp-prod-email-dispatch \
   --region "$REGION" \
   --query 'services[].{name:serviceName,desired:desiredCount,running:runningCount,status:status}' --output table
 
 # Tasks de um Service (pega os taskArns p/ inspecionar)
-aws ecs list-tasks --cluster "$CLUSTER" --service-name core-api-http --region "$REGION"
+aws ecs list-tasks --cluster "$CLUSTER" --service-name erp-prod-api --region "$REGION"
 
 # Por que uma task parou? (exit code + stoppedReason — o 1º lugar pra olhar num crash)
 aws ecs describe-tasks --cluster "$CLUSTER" --region "$REGION" --tasks <taskArn> \
@@ -193,11 +193,11 @@ aws logs tail /erp/prod/api --follow --region "$REGION"
 aws logs tail /erp/prod/email-dispatch --since 15m --region "$REGION"
 
 # Escalar horizontalmente (nº de réplicas)
-aws ecs update-service --cluster "$CLUSTER" --service core-api-outbox-contracts \
+aws ecs update-service --cluster "$CLUSTER" --service erp-prod-outbox-contracts \
   --desired-count 3 --region "$REGION"
 
 # Forçar novo deploy SEM mudar a imagem (re-puxa :sha atual, recria tasks)
-aws ecs update-service --cluster "$CLUSTER" --service core-api-http \
+aws ecs update-service --cluster "$CLUSTER" --service erp-prod-api \
   --force-new-deployment --region "$REGION"
 ```
 
@@ -212,21 +212,21 @@ Imagem é **imutável** por `:sha-<commit>` no ECR → rollback = **re-apontar o
 Definition revision anterior** (que já referencia a `:sha` boa). Não rebuilda nada.
 
 ```bash
-# 1. Descubra a revision ATUAL e a anterior da família (ex.: core-api-http)
+# 1. Descubra a revision ATUAL e a anterior da família (ex.: erp-prod-api)
 aws ecs list-task-definitions --family-prefix erp-prod-api --sort DESC \
   --region "$REGION" --query 'taskDefinitionArns[:3]' --output table
 #   …:erp-prod-api:42   ← atual (ruim)
 #   …:erp-prod-api:41   ← alvo do rollback
 
 # 2. Re-aponte o Service para a revision anterior (deploy rolling de volta)
-aws ecs update-service --cluster "$CLUSTER" --service core-api-http \
+aws ecs update-service --cluster "$CLUSTER" --service erp-prod-api \
   --task-definition erp-prod-api:41 --region "$REGION"
 
 # 3. Repita para CADA Service que foi promovido no deploy ruim (a API E os 5 workers,
 #    se a release tocou todos). Os workers usam a mesma :sha → reverta as 6 famílias.
 
 # 4. Acompanhe até estabilizar
-aws ecs wait services-stable --cluster "$CLUSTER" --services core-api-http --region "$REGION"
+aws ecs wait services-stable --cluster "$CLUSTER" --services erp-prod-api --region "$REGION"
 ```
 
 > **Blue/green (CodeDeploy):** se a API roda em blue/green, prefira o rollback do CodeDeploy
