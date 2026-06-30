@@ -1,0 +1,144 @@
+{
+  "family": "erp-prod-api",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-ecs-execution",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-api-task",
+  "containerDefinitions": [
+    {
+      "name": "core-api",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        },
+        {
+          "name": "AUTH_DRIVER",
+          "value": "mysql"
+        },
+        {
+          "name": "PROGRAMS_DRIVER",
+          "value": "mysql"
+        },
+        {
+          "name": "CONTRACTS_DRIVER",
+          "value": "mysql"
+        },
+        {
+          "name": "PARTNERS_DRIVER",
+          "value": "mysql"
+        },
+        {
+          "name": "FINANCIAL_DRIVER",
+          "value": "mysql"
+        },
+        {
+          "name": "S3_REGION",
+          "value": "<REGIAO>"
+        },
+        {
+          "name": "S3_BUCKET",
+          "value": "erp-prod-contracts-documents"
+        },
+        {
+          "name": "S3_FORCE_PATH_STYLE",
+          "value": "false"
+        },
+        {
+          "name": "AUTH_RESET_BASE_URL",
+          "value": "https://<DOMINIO_FRONT>/reset-password"
+        },
+        {
+          "name": "TRUST_PROXY",
+          "value": "<CIDR_DO_ELB>"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "AUTH_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/AUTH_DATABASE_URL"
+        },
+        {
+          "name": "PROGRAMS_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/PROGRAMS_DATABASE_URL"
+        },
+        {
+          "name": "CONTRACTS_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/CONTRACTS_DATABASE_URL"
+        },
+        {
+          "name": "PARTNERS_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/PARTNERS_DATABASE_URL"
+        },
+        {
+          "name": "FINANCIAL_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/FINANCIAL_DATABASE_URL"
+        },
+        {
+          "name": "AUTH_JWT_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/AUTH_JWT_PRIVATE_KEY"
+        },
+        {
+          "name": "AUTH_JWT_PUBLIC_KEY",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/AUTH_JWT_PUBLIC_KEY"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/erp/prod/api",
+          "awslogs-region": "<REGIAO>",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Environment",
+      "value": "prod"
+    },
+    {
+      "key": "Service",
+      "value": "core-api-http"
+    },
+    {
+      "key": "Type",
+      "value": "api"
+    },
+    {
+      "key": "Owner",
+      "value": "infra"
+    },
+    {
+      "key": "Repo",
+      "value": "ERP-INFRA"
+    }
+  ]
+}

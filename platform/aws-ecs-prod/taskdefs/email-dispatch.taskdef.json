@@ -1,0 +1,104 @@
+{
+  "family": "erp-prod-email-dispatch",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-ecs-execution",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-worker-task",
+  "containerDefinitions": [
+    {
+      "name": "core-api",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
+      "essential": true,
+      "entryPoint": [
+        "tini",
+        "--",
+        "node"
+      ],
+      "command": [
+        "src/workers/email-dispatch/run.ts"
+      ],
+      "environment": [
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        },
+        {
+          "name": "EMAIL_PROVIDER",
+          "value": "smtp"
+        },
+        {
+          "name": "EMAIL_FROM",
+          "value": "ERP Bem Comum <no-reply@bemcomum.org>"
+        },
+        {
+          "name": "SMTP_HOST",
+          "value": "email-smtp.<REGIAO>.amazonaws.com"
+        },
+        {
+          "name": "SMTP_PORT",
+          "value": "587"
+        },
+        {
+          "name": "SMTP_SECURE",
+          "value": "false"
+        },
+        {
+          "name": "SMTP_USER",
+          "value": "<SES_SMTP_USERNAME>"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "AUTH_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/AUTH_DATABASE_URL"
+        },
+        {
+          "name": "PARTNERS_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/PARTNERS_DATABASE_URL"
+        },
+        {
+          "name": "SMTP_PASS",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/SMTP_PASS"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/erp/prod/email-dispatch",
+          "awslogs-region": "<REGIAO>",
+          "awslogs-stream-prefix": "worker"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Environment",
+      "value": "prod"
+    },
+    {
+      "key": "Service",
+      "value": "email-dispatch"
+    },
+    {
+      "key": "Type",
+      "value": "worker"
+    },
+    {
+      "key": "Owner",
+      "value": "infra"
+    },
+    {
+      "key": "Repo",
+      "value": "ERP-INFRA"
+    }
+  ]
+}

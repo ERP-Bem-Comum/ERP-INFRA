@@ -3,7 +3,7 @@
 Ambiente de homologação / PBE (ver [ADR-0021](../../../core-api/handbook/architecture/adr/0021-aws-primary-magalu-pbe-supersedes-0007.md)):
 **sem dados reais**, custeado pela equipe, single-node, descartável.
 
-Uma VPS Magalu `BV1-2-10` (1 vCPU / 2 GB RAM / 10 GB) roda Caddy + core-api + workers +
+Uma VPS Magalu `BV1-2-20` (1 vCPU / 2 GB RAM / 20 GB) roda Caddy + core-api + workers +
 MySQL 8.4 via Docker Compose. A imagem do core-api é **buildada no GitHub Actions** e
 publicada no ghcr; **esta VPS nunca compila** — só faz `docker compose pull` da tag `:qa`.
 
@@ -28,11 +28,16 @@ Internet
 
 A VM é criada via `mgc` (CLI da Magalu), região `br-ne1`, AZ `br-ne1-a`:
 
-- flavor `BV1-2-10`, imagem `cloud-ubuntu-24.04 LTS`;
+- flavor `BV1-2-20`, imagem `cloud-ubuntu-24.04 LTS`;
 - VPC default, SSH key `magalu-bootstrap`, IP público;
 - security group com `22` (key-only), `80`, `443` e egress;
 - `cloud-init` ([../tofu/environments/qa/cloud-init.yaml](../tofu/environments/qa/cloud-init.yaml))
   instala docker, cria 2 GB de swap, habilita UFW e prepara `/opt/erp-qa`.
+
+> A IaC OpenTofu em [`../tofu/environments/qa/`](../tofu/environments/qa/) descreve esse mesmo
+> provisionamento como **referência / IaC futura** — o caminho canônico hoje é o `mgc` CLI acima.
+> **Não** execute `tofu apply` sem antes importar a VM existente para o state (ver
+> [`../README.md`](../README.md)).
 
 > SSH só por chave (`PasswordAuthentication no`). Acesso administrativo restrito; o
 > deploy automático usa uma deploy key travada por *forced-command* em `deploy.sh`.
@@ -99,7 +104,7 @@ externamente via **systemd timer** ou **ofelia** na VPS — não via `compose up
 ## Limitações conhecidas
 
 - ponto único de falha; sem HA, sem réplica;
-- `BV1-2-10` é enxuto: 2 GB RAM + 2 GB swap. Com os 5 workers, o footprint total
+- `BV1-2-20` é enxuto: 2 GB RAM + 2 GB swap. Com os 5 workers, o footprint total
   sobe para ~2568 MB (baseline 1608 m + workers 960 m). Monitorar com `docker stats`.
-  Se houver OOM ou disco cheio (10 GB), subir para `BV1-2-20` / `BV2-2-20`;
+  Se houver OOM ou disco cheio (20 GB), subir para `BV2-2-20` (mais vCPU) / `BV2-4-40` (mais RAM+disco);
 - sem backup automatizado (ambiente descartável — recriar do zero é o plano de recuperação).

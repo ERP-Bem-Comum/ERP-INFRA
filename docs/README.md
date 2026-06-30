@@ -11,6 +11,8 @@ Esta pasta é a **especificação técnica viva** da infraestrutura do ERP Bem C
 | [`secrets.md`](secrets.md) | Catálogo de secrets (resumo; ver o YAML abaixo) | Dev + Infra + Security |
 | [`env-and-secrets.reference.yaml`](env-and-secrets.reference.yaml) | **Catálogo COMPLETO de env vars & secrets** (frontend + backend), verificado no código — a referência | Dev + Infra + Security |
 | [`observability.md`](observability.md) | Logs, métricas, tracing, alertas baseline | Dev + Infra + Oncall |
+| [`runbooks/aws-ecs-architecture-by-layer.md`](runbooks/aws-ecs-architecture-by-layer.md) | **Guia didático da prod AWS ECS, camada por camada** (Rede/RDS/Secrets/ECS/ELB/CloudWatch) — diagramas + Terraform/HCL + Task Def JSON | Dev + Infra |
+| [`runbooks/ci-cd-pipeline.md`](runbooks/ci-cd-pipeline.md) | **Guia do pipeline CI/CD** CodePipeline→CodeBuild→ECR→CodeDeploy→ECS — `buildspec.yml`/`appspec.yaml`/`taskdef.json` + diagramas | Dev + Infra |
 | [`runbooks/deploy-and-operations.md`](runbooks/deploy-and-operations.md) | **Runbook de deploy & operações** — subir, verificar, debugar (RBs), rollback, rotação | Dev + Infra + Oncall |
 | [`runbooks/observability-self-hosted-plan.md`](runbooks/observability-self-hosted-plan.md) | Plano de OTel + GlitchTip self-hosted no tailnet (fase 1 — ADR-0019) | Dev + Infra |
 | [`adr/`](adr/) | Decisões arquiteturais específicas deste repo | Todos |

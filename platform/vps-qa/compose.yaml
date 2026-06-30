@@ -1,6 +1,6 @@
 name: erp-bem-comum-qa
 
-# Stack de QA (PBE — ADR-0021) numa única VPS Magalu BV1-2-10 (1 vCPU / 2 GB / 10 GB).
+# Stack de QA (PBE — ADR-0021) numa única VPS Magalu BV1-2-20 (1 vCPU / 2 GB / 20 GB).
 # As imagens (core-api e web/BFF) são buildadas no GitHub Actions e publicadas no
 # ghcr; esta VPS NUNCA compila — só faz pull (CORE_API_IMAGE/WEB_IMAGE) e sobe.
 # Limites de memória apertados para caber mysql+core-api+web+caddy em 2 GB + 2 GB
@@ -162,7 +162,7 @@ services:
   # concluídas via core-api-migrate). Sem healthcheck HTTP (workers são long-running
   # sem borda HTTP — Docker os considera "running" assim que o processo não crasha).
   #
-  # Nota de memória (VPS BV1-2-10, 2 GB RAM + 2 GB swap): os 5 workers somam ~960 MB
+  # Nota de memória (VPS BV1-2-20, 2 GB RAM + 2 GB swap): os 5 workers somam ~960 MB
   # de mem_limit (4×192 m + 1×256 m) além do baseline (mysql+core-api+web+caddy ≈1608 m),
   # totalizando ~2568 MB. Dentro da RAM+swap (4 GB total), mas headroom reduzido.
   # Monitorar com `docker stats --no-stream`.

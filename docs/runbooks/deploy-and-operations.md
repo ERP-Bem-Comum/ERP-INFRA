@@ -18,7 +18,8 @@
 
 ## Índice rápido
 
-- **Subir:** [§3 dev local](#3-subir-a-aplicação) · [§4 QA (CI/CD)](#4-qa--cicd-o-jeito-normal) · [§5 prod (AWS ECS)](#5-prod-aws-ecs)
+- **Subir:** [§3 dev local](#3-subir-a-aplicação) · [§4 QA (CI/CD)](#4-qa--cicd-o-jeito-normal) · [§5 prod (AWS ECS)](#5-prod-aws-ecs) · [§5.1 comandos AWS CLI](#51-comandos-úteis-aws-cli) · [§5.2 rollback ECS](#52-rollback-em-produção-ecs) · [§5.3 troubleshooting ECS](#53-troubleshooting-de-produção-ecs)
+- **Entender o pipeline (didático):** [`ci-cd-pipeline.md`](ci-cd-pipeline.md) (CodePipeline → CodeBuild → ECR → CodeDeploy → ECS)
 - **Verificar:** [§6 smoke checks](#6-verificação-pós-deploy-smoke-checks)
 - **Quando algo quebra (RBs):** [RB-001 login "server"](#rb-001--login-falha-com-algo-deu-errado--error-server) · [RB-002 deploy vermelho](#rb-002--deploy-ci-vermelho) · [RB-003 boot crash](#rb-003--container-crasha-no-boot) · [RB-004 /ready 503](#rb-004--ready-retorna-503) · [RB-005 core-api 5xx](#rb-005--core-api-authlogin-5xx) · [RB-006 disco cheio](#rb-006--vps-sem-disco) · [RB-007 rollback](#rb-007--rollback) · [RB-008 rotação de key](#rb-008--rotação-da-auth-key-do-tailnet)
 - **Manutenção:** [§11 rotação de segredos](#11-rotação-de-segredos-prazos) · [§12 escalonamento](#12-escalonamento) · [§13 melhoria contínua](#13-melhoria-contínua--automação)
@@ -64,7 +65,7 @@
 |---|---|---|---|
 | dev local | sua máquina | `ERP-INFRA/local/up.sh` | build local |
 | **x99** | VM `incus` no homelab (sandbox de validação) | Docker Compose na VM | build/pull local |
-| **QA** | VPS Magalu `erp-bem-comum-qa` (`201.23.88.74`, 10 GB) | **CI/CD** (push `develop`) | `ghcr.io/.../bemcomum-web:qa` |
+| **QA** | VPS Magalu `erp-bem-comum-qa` (`201.23.88.74`, 20 GB) | **CI/CD** (push `develop`) | `ghcr.io/.../bemcomum-web:qa` |
 | **prod** | AWS **ECS** (ELB + múltiplas tasks da API + RDS) — [ADR-0003](../adr/0003-producao-aws-ecs.md) | **CodePipeline → CodeBuild → CodeDeploy** | `:sha-<commit>` (ECR) |
 | prod (legado) | `erp-bem-comum.codebit.biz` (+ `…-api…`) | Codebit | — |
 
@@ -99,6 +100,11 @@ ou os workflows forem pra `main`.
 
 ## 5. Prod (AWS ECS)
 
+> **Entender o pipeline (didático):** se você nunca viu o caminho `git push → CodePipeline →
+> CodeBuild → ECR → CodeDeploy → ECS`, leia antes o guia
+> [`ci-cd-pipeline.md`](ci-cd-pipeline.md) (diagramas + `buildspec.yml`/`appspec.yaml`/`taskdef.json`
+> comentados). Esta §5 é a **operação** do dia a dia (subir, escalar, rollback, troubleshooting).
+
 Produção roda em **AWS ECS** (alta disponibilidade — [ADR-0003](../adr/0003-producao-aws-ecs.md)).
 Não há `docker compose` nem VPS em prod: a infra **traduz o `compose.yaml` do
 core-api** (branch `main`) em **1 Task Definition + 1 ECS Service por service**
@@ -132,8 +138,8 @@ push em main → CodePipeline
 
 A planta é única (`core-api/compose.yaml`); o que muda por ambiente é só
 dimensionamento/config. Overrides pequenos materializam isso:
-[`local/compose.x99.yaml`](../../local/compose.x99.yaml) (x99) e
-[`platform/vps-qa/compose.qa.yaml`](../../platform/vps-qa/compose.qa.yaml) (qa).
+[`local/docker-compose.override.yml`](../../local/docker-compose.override.yml) (x99) e
+[`platform/vps-qa/compose.yaml`](../../platform/vps-qa/compose.yaml) (qa).
 
 | Item | x99 (incus) | qa (Magalu) | prod (AWS ECS) |
 |---|---|---|---|
@@ -149,7 +155,7 @@ dimensionamento/config. Overrides pequenos materializam isso:
 
 > ¹ O baseline atual da VPS de QA sobe **0 workers** (eventos cross-módulo
 > acumulam até habilitar — ver `platform/vps-qa/README.md`). O override
-> `compose.qa.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
+> `compose.yaml` permite ligar **1 réplica** de cada quando a VPS comportar.
 >
 > **E-mail em prod = Amazon SES via SMTP** (`EMAIL_PROVIDER=smtp`,
 > `SMTP_HOST=email-smtp.<região>.amazonaws.com`), **não** Umbler/Resend. O
@@ -157,11 +163,97 @@ dimensionamento/config. Overrides pequenos materializam isso:
 >
 > Detalhes de prod (conta, região, cluster ECS, ARNs) — **a confirmar com o time de infra**.
 
+### 5.1 Comandos úteis (AWS CLI)
+
+> Linguagem: **AWS CLI**. Placeholders `<...>` (cluster, região) — **a confirmar com infra**.
+> Convenção dos nomes de Service: `core-api-http`, `core-api-outbox-contracts`,
+> `core-api-outbox-partners`, `core-api-supplier-projection`,
+> `core-api-contract-count-projection`, `core-api-email-dispatch`.
+
+```bash
+CLUSTER=<cluster_ecs>            # ex.: erp-prod — a confirmar com infra
+REGION=<região>                 # ex.: us-east-1
+
+# Estado dos Services (running vs desired, deployment em andamento, eventos recentes)
+aws ecs describe-services --cluster "$CLUSTER" \
+  --services core-api-http core-api-outbox-contracts core-api-outbox-partners \
+             core-api-supplier-projection core-api-contract-count-projection core-api-email-dispatch \
+  --region "$REGION" \
+  --query 'services[].{name:serviceName,desired:desiredCount,running:runningCount,status:status}' --output table
+
+# Tasks de um Service (pega os taskArns p/ inspecionar)
+aws ecs list-tasks --cluster "$CLUSTER" --service-name core-api-http --region "$REGION"
+
+# Por que uma task parou? (exit code + stoppedReason — o 1º lugar pra olhar num crash)
+aws ecs describe-tasks --cluster "$CLUSTER" --region "$REGION" --tasks <taskArn> \
+  --query 'tasks[].{last:lastStatus,reason:stoppedReason,containers:containers[].{name:name,exit:exitCode,reason:reason}}'
+
+# Logs em tempo real (precisa de awslogs na task def — ver 5.3)
+aws logs tail /erp/prod/api --follow --region "$REGION"
+aws logs tail /erp/prod/email-dispatch --since 15m --region "$REGION"
+
+# Escalar horizontalmente (nº de réplicas)
+aws ecs update-service --cluster "$CLUSTER" --service core-api-outbox-contracts \
+  --desired-count 3 --region "$REGION"
+
+# Forçar novo deploy SEM mudar a imagem (re-puxa :sha atual, recria tasks)
+aws ecs update-service --cluster "$CLUSTER" --service core-api-http \
+  --force-new-deployment --region "$REGION"
+```
+
+> **Escalar é seguro nos workers de outbox.** `outbox-contracts` e `outbox-partners` usam
+> `FOR UPDATE SKIP LOCKED` (ADR-0015) → subir `--desired-count` para N **não duplica evento**. Já
+> `supplier-projection`, `contract-count-projection` e `email-dispatch` rodam com **1 réplica**:
+> escalar essas exige análise (a projeção/dispatch não é idempotente sob concorrência hoje).
+
+### 5.2 Rollback em produção (ECS)
+
+Imagem é **imutável** por `:sha-<commit>` no ECR → rollback = **re-apontar o Service para a Task
+Definition revision anterior** (que já referencia a `:sha` boa). Não rebuilda nada.
+
+```bash
+# 1. Descubra a revision ATUAL e a anterior da família (ex.: core-api-http)
+aws ecs list-task-definitions --family-prefix erp-prod-api --sort DESC \
+  --region "$REGION" --query 'taskDefinitionArns[:3]' --output table
+#   …:erp-prod-api:42   ← atual (ruim)
+#   …:erp-prod-api:41   ← alvo do rollback
+
+# 2. Re-aponte o Service para a revision anterior (deploy rolling de volta)
+aws ecs update-service --cluster "$CLUSTER" --service core-api-http \
+  --task-definition erp-prod-api:41 --region "$REGION"
+
+# 3. Repita para CADA Service que foi promovido no deploy ruim (a API E os 5 workers,
+#    se a release tocou todos). Os workers usam a mesma :sha → reverta as 6 famílias.
+
+# 4. Acompanhe até estabilizar
+aws ecs wait services-stable --cluster "$CLUSTER" --services core-api-http --region "$REGION"
+```
+
+> **Blue/green (CodeDeploy):** se a API roda em blue/green, prefira o rollback do CodeDeploy
+> (`aws deploy stop-deployment --deployment-id <id> --auto-rollback-enabled`) ou o console — ele
+> mantém o "blue" no ar. O `update-service` acima é o caminho do **rolling**. Modo em uso (blue/green
+> vs rolling) — **a confirmar com infra** (ADR-0003).
+>
+> Verificação pós-rollback: smoke checks da [§6](#6-verificação-pós-deploy-smoke-checks) +
+> `describe-services` mostrando `running == desired` na revision antiga.
+
+### 5.3 Troubleshooting de produção (ECS)
+
+| Sintoma | Diagnóstico | Causa provável / Resolução |
+|---|---|---|
+| **Task não sobe** (fica `PENDING`→`STOPPED`) | `describe-tasks` → `stoppedReason` + `containers[].exitCode` | `exit 78` (EX_CONFIG) = env/secret faltando (ex.: `email-dispatch` sem `SMTP_*`) → cheque o `secrets:`/`environment:` da Task Def vs o catálogo. Pull falhou = `executionRole` sem permissão de ECR ou `:sha` inexistente. |
+| **Health check falha** (API `UNHEALTHY` no ELB; tasks reciclando) | console do **target group** → *Targets* `unhealthy`; `aws logs tail /erp/prod/api` | O probe bate em `/health` (porta 3000). Confira: porta do target group = `containerPort` 3000; `/ready` (não só `/health`) responde; deadline do `startPeriod`. Se `/ready` dá 503 → [RB-004](#rb-004--ready-retorna-503). Se o core-api explode no login → [RB-005](#rb-005--core-api-authlogin-5xx). |
+| **"Nenhum log no CloudWatch"** | `aws logs tail /erp/prod/<service>` retorna vazio mesmo com task `RUNNING` | Falta `logConfiguration` com `logDriver: awslogs` na Task Definition (ou o log group não existe / sem permissão). Adicione o bloco `awslogs` (group `/erp/prod/<service>`, region, stream-prefix por tipo: `api`/`worker`/`job`) — ver `taskdef.json` no guia [`ci-cd-pipeline.md`](ci-cd-pipeline.md#5-codedeploy-ecs--promove-a-imagem). |
+| **Worker em crash-loop** (sobe/morre/sobe) | `describe-tasks` → `exitCode`; `aws logs tail /erp/prod/<worker>` | Quase sempre **env/secret faltando**: ex. `email-dispatch` aborta com **exit 78** sem `SMTP_HOST`/`SMTP_PASS`. Workers de outbox crasham se `*_DATABASE_URL` errada/sem rede pro RDS. Corrija o `secrets:`/`environment:` da Task Def, registre nova revision e `update-service`. |
+
+> Para crash **por env inválida no boot** (qualquer serviço), a causa-raiz e o catálogo de env estão
+> em [RB-003](#rb-003--container-crasha-no-boot) + [`env-and-secrets.reference.yaml`](../env-and-secrets.reference.yaml).
+
 ---
 
 ## 6. Verificação pós-deploy (smoke checks)
 ```bash
-HOST=https://erp-bem-comum.codebit.biz        # local: https://app.localhost (use curl -k p/ a CA interna)
+HOST=https://<DOMINIO_FRONT>        # prod ECS: domínio do front (a confirmar com infra) · local: https://app.localhost (use curl -k p/ a CA interna)
 curl -fsS $HOST/health    # 200 (liveness; não toca o backend)
 curl -fsS $HOST/ready     # 200 {"status":"ready","checks":{"config":true,"coreApi":true}} ; senão 503
 ```
@@ -296,6 +388,7 @@ Regra: segredo **nunca** em git/imagem/log.
     schedule real do alerta de expiração (depende dos workflows estarem na branch default `main`).
 
 ## 14. Referências
+- **[`ci-cd-pipeline.md`](ci-cd-pipeline.md)** — guia didático do pipeline de prod (CodePipeline → CodeBuild → ECR → CodeDeploy → ECS) com `buildspec.yml`/`appspec.yaml`/`taskdef.json` comentados.
 - **[`env-and-secrets.reference.yaml`](../env-and-secrets.reference.yaml)** — catálogo de env/secrets (a referência).
 - [`topology.md`](../topology.md) · [`environments.md`](../environments.md) · [`secrets.md`](../secrets.md) · [`observability.md`](../observability.md) · [`adr/0003 — Produção AWS ECS`](../adr/0003-producao-aws-ecs.md) (supersede [`adr/0002`](../adr/0002-producao-economica-aws-lightsail.md))
 - web-app: `.github/workflows/build-publish.yml` · ADRs 0014/0015/0016/0018/0019/0020 · **issue #92**.

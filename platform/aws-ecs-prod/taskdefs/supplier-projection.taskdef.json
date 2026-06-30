@@ -1,0 +1,76 @@
+{
+  "family": "erp-prod-supplier-projection",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-ecs-execution",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/erp-prod-worker-task",
+  "containerDefinitions": [
+    {
+      "name": "core-api",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGIAO>.amazonaws.com/core-api:sha-<commit>",
+      "essential": true,
+      "entryPoint": [
+        "tini",
+        "--",
+        "node"
+      ],
+      "command": [
+        "src/workers/supplier-view-projection/run.ts"
+      ],
+      "environment": [
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "PARTNERS_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/PARTNERS_DATABASE_URL"
+        },
+        {
+          "name": "FINANCIAL_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGIAO>:<ACCOUNT_ID>:secret:erp/prod/FINANCIAL_DATABASE_URL"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/erp/prod/supplier-projection",
+          "awslogs-region": "<REGIAO>",
+          "awslogs-stream-prefix": "worker"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Environment",
+      "value": "prod"
+    },
+    {
+      "key": "Service",
+      "value": "supplier-projection"
+    },
+    {
+      "key": "Type",
+      "value": "worker"
+    },
+    {
+      "key": "Owner",
+      "value": "infra"
+    },
+    {
+      "key": "Repo",
+      "value": "ERP-INFRA"
+    }
+  ]
+}
