@@ -74,6 +74,70 @@ flowchart TB
 
 ---
 
+## 1·A. Produção em AWS ECS — alvo provisionado (🟢)
+
+> O diagrama de §1 é a **visão de componentes** (lógica: quem fala com quem). O
+> diagrama abaixo é a **materialização em AWS ECS** dessa visão — como a prod
+> realmente é montada (ELB + tasks ECS + RDS + Secrets Manager + SES + CloudWatch),
+> traduzindo o [`compose.yaml`](../../core-api/compose.yaml) do core-api conforme
+> [`ADR-0003`](adr/0003-producao-aws-ecs.md).
+>
+> 📘 **Guia didático camada por camada (com exemplos de código por camada — HCL +
+> JSON):** [`runbooks/aws-ecs-architecture-by-layer.md`](runbooks/aws-ecs-architecture-by-layer.md).
+
+```mermaid
+flowchart TB
+    Internet(("🌐 Internet"))
+
+    subgraph VPCNET["🛡️ VPC — região &lt;REGIAO&gt; (a confirmar com infra)"]
+        subgraph PUBNET["Subnets PÚBLICAS (≥2 AZs)"]
+            ELB["⚖️ ELB / ALB<br/>HTTPS :443 (cert ACM)<br/>termina TLS · health /health"]
+            NATGW["🔀 NAT Gateway"]
+        end
+        subgraph PRIVNET["Subnets PRIVADAS (≥2 AZs)"]
+            subgraph ECSCL["ECS Cluster (Fargate)"]
+                APISVC["🟢 ECS Service: api (http)<br/>N tasks · :3000 · atrás do ELB<br/>ENTRYPOINT node src/server.ts"]
+                WKSVC["⚙️ 5 ECS Services: workers (sem ELB)<br/>outbox-contracts · outbox-partners<br/>supplier-projection · contract-count-projection<br/>email-dispatch"]
+            end
+            RDS[("🗄️ RDS MySQL 8.4<br/>Multi-AZ · :3306 · database core")]
+        end
+    end
+
+    SM["🔐 Secrets Manager<br/>*_DATABASE_URL · AUTH_JWT_* · smtp_pass"]
+    SES["📧 Amazon SES (SMTP)<br/>email-smtp.&lt;REGIAO&gt;.amazonaws.com"]
+    ECR["📦 ECR<br/>core-api :sha-&lt;commit&gt;"]
+    CW["📊 CloudWatch Logs<br/>1 log group por service"]
+
+    Internet --> ELB
+    ELB -->|":3000 (SG ELB→ECS)"| APISVC
+    APISVC -->|":3306 (SG ECS→RDS)"| RDS
+    WKSVC -->|":3306"| RDS
+    WKSVC -->|"SMTP :587 via NAT"| SES
+    APISVC -. "valueFrom no boot" .-> SM
+    WKSVC -. "valueFrom no boot" .-> SM
+    ECSCL -. "docker pull" .-> ECR
+    APISVC -. awslogs .-> CW
+    WKSVC -. awslogs .-> CW
+
+    classDef edge fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef compute fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef data fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef managed fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    class ELB,NATGW edge
+    class APISVC,WKSVC compute
+    class RDS data
+    class SM,SES,ECR,CW managed
+```
+
+**Tradução planta → ECS (ADR-0003):** cada `service` do `compose.yaml` vira
+**1 Task Definition + 1 ECS Service** (mesma imagem do ECR, `command` sobrescrito).
+A **API** (`http`) fica atrás do **ELB**; os **5 workers** do profile `workers` são
+ECS Services **sem ELB**. `mysql`→**RDS**, `edge`/Caddy→**ELB**,
+arquivos `secrets/*.txt`→**Secrets Manager**, `minio`→**S3**, e-mail→**Amazon SES (SMTP)**.
+Detalhes (conta, região, ARNs, cluster) **a confirmar com o time de infra**.
+
+---
+
 ## 2. Fluxo: leitura em tela nova
 
 ```mermaid
@@ -195,5 +259,7 @@ Mudanças nesta página exigem:
 - [`environments.md`](environments.md) — diferenças entre dev / staging / prod
 - [`secrets.md`](secrets.md) — catálogo de secrets que esta topologia consome
 - [`observability.md`](observability.md) — onde olhar quando algo quebra
+- [`runbooks/aws-ecs-architecture-by-layer.md`](runbooks/aws-ecs-architecture-by-layer.md) — **guia didático da arquitetura de prod AWS ECS, camada por camada** (VPC · RDS · Secrets Manager · ECS · ELB · CloudWatch), com exemplos de código (HCL + JSON) por camada
+- [`adr/0003-producao-aws-ecs.md`](adr/0003-producao-aws-ecs.md) — decisão de produção em AWS ECS
 - [`adr/`](adr/) — decisões arquiteturais específicas deste repo
 - Handbook arquitetural — fonte canônica das decisões originais (`ADR-0005`, `ADR-0006`, `ADR-0013`, `ADR-0014` referenciados acima)
