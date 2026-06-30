@@ -3,17 +3,25 @@
 Ambiente de homologação / PBE (ver [ADR-0021](../../../core-api/handbook/architecture/adr/0021-aws-primary-magalu-pbe-supersedes-0007.md)):
 **sem dados reais**, custeado pela equipe, single-node, descartável.
 
-Uma VPS Magalu `BV1-2-10` (1 vCPU / 2 GB RAM / 10 GB) roda Caddy + core-api + MySQL 8.4
-via Docker Compose. A imagem do core-api é **buildada no GitHub Actions** e publicada no
-ghcr; **esta VPS nunca compila** — só faz `docker compose pull` da tag `:qa`.
+Uma VPS Magalu `BV1-2-10` (1 vCPU / 2 GB RAM / 10 GB) roda Caddy + core-api + workers +
+MySQL 8.4 via Docker Compose. A imagem do core-api é **buildada no GitHub Actions** e
+publicada no ghcr; **esta VPS nunca compila** — só faz `docker compose pull` da tag `:qa`.
 
 ```text
 Internet
   -> DNS A  erp-qa.gabrieladeraldo.dev
   -> IP público da VPS
-  -> Caddy :80/:443  (TLS automático via ACME)
-  -> core-api :3000  (monolito: auth + partners + contracts + programs)
-  -> MySQL 8.4 :3306 (rede interna, sem porta publicada)
+  -> Caddy :80/:443             (TLS automático via ACME)
+  -> web :3000                  (BFF TanStack Start)
+  -> core-api :3000             (API HTTP — monolito: auth + partners + contracts + programs + financial)
+  -> core-api-outbox-contracts  (worker outbox contracts, long-running)
+  -> core-api-outbox-partners   (worker outbox partners, long-running)
+  -> core-api-supplier-projection    (worker projeção fin_supplier_view, long-running)
+  -> core-api-contract-count-projection (worker projeção contract count, long-running)
+  -> core-api-email-dispatch    (worker envio de e-mail via SMTP/SES, long-running)
+  -> core-api-migrate           (job one-shot, roda antes do core-api subir)
+  -> core-api-sweeper           (job one-shot, agendamento externo — systemd timer/ofelia)
+  -> MySQL 8.4 :3306            (rede interna, sem porta publicada)
 ```
 
 ## Provisionamento da VPS
@@ -60,10 +68,11 @@ no `.env` e rode `./deploy.sh` de novo. **Nunca compile imagem na VPS.**
 
 ## Migrations e seed
 
-As migrations de cada módulo (auth / partners / contracts / programs) rodam **no boot**
-do core-api (Drizzle `migrate()` ao construir o driver MySQL) — banco zerado é migrado
-no primeiro start. O seed de RBAC/usuário admin (`AUTH_SEED_JSON`, `pnpm db:seed:partners`)
-é passo separado, ainda **não** automatizado aqui.
+As migrations de todos os módulos (auth / partners / contracts / programs / financial /
+notifications) rodam no job dedicado `core-api-migrate` (`src/jobs/migrate/run.ts`)
+**antes** do `core-api` subir (`depends_on: service_completed_successfully`). O banco
+zerado é migrado no primeiro start. O seed de RBAC/usuário admin (`AUTH_SEED_JSON`,
+`pnpm db:seed:partners`) é passo separado, ainda **não** automatizado aqui.
 
 ## Operação
 
@@ -71,13 +80,26 @@ no primeiro start. O seed de RBAC/usuário admin (`AUTH_SEED_JSON`, `pnpm db:see
 docker compose ps
 docker stats --no-stream
 docker compose logs -f core-api
+docker compose logs -f core-api-outbox-contracts
+docker compose logs -f core-api-email-dispatch
 free -h && df -h /
 ```
+
+### Invocar o sweeper manualmente
+
+```bash
+# O sweeper NÃO sobe via `compose up` (profile opt-in).
+# Disparo avulso (mesma imagem do core-api, executa e sai):
+docker compose run --rm core-api-sweeper
+```
+
+O agendamento recorrente (1×/dia às 00:05 America/Sao_Paulo) é configurado
+externamente via **systemd timer** ou **ofelia** na VPS — não via `compose up`.
 
 ## Limitações conhecidas
 
 - ponto único de falha; sem HA, sem réplica;
-- `BV1-2-10` é enxuto: 2 GB RAM + 2 GB swap para MySQL + core-api + Caddy. Se houver
-  OOM ou disco cheio (10 GB), subir para `BV1-2-20` / `BV2-2-20`;
-- sem worker de outbox neste baseline (eventos cross-módulo acumulam até habilitar);
+- `BV1-2-10` é enxuto: 2 GB RAM + 2 GB swap. Com os 5 workers, o footprint total
+  sobe para ~2568 MB (baseline 1608 m + workers 960 m). Monitorar com `docker stats`.
+  Se houver OOM ou disco cheio (10 GB), subir para `BV1-2-20` / `BV2-2-20`;
 - sem backup automatizado (ambiente descartável — recriar do zero é o plano de recuperação).

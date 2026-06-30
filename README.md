@@ -60,6 +60,28 @@ docker compose logs -f mysql
 
 Detalhes em [`local/README.md`](local/README.md).
 
+## 🚀 Quick start (QA em VPS)
+
+O caminho econômico para Magalu Cloud está em
+[`platform/vps-qa/`](platform/vps-qa/). Ele prepara uma VPS Ubuntu 24.04,
+recebe imagens construídas fora da máquina e expõe somente Caddy em `80/443`.
+
+> O QA atual usa `BV1-2-20`. A
+> `BV1-1-10` fica restrita a demonstrações curtas.
+
+## 🚀 Produção (AWS ECS)
+
+A produção roda em **AWS ECS** (alta disponibilidade): a infra **traduz o
+`compose.yaml` do core-api** em 1 Task Definition + 1 ECS Service por service — a
+**API** atrás do **ELB**, os 5 workers como Services sem ELB. Banco em **RDS**,
+segredos no **Secrets Manager**, e-mail via **Amazon SES (SMTP)**, documentos em
+**S3**, CI/CD por **CodePipeline → CodeBuild → CodeDeploy**.
+
+Decisão e detalhes em [`ADR-0003 — Produção AWS ECS`](docs/adr/0003-producao-aws-ecs.md)
+(supersede a [`ADR-0002`](docs/adr/0002-producao-economica-aws-lightsail.md), o
+baseline econômico Lightsail descartado). Detalhes específicos (conta, região,
+cluster, ARNs) são mantidos pelo time de infra.
+
 ---
 
 ## 🤝 Como contribuir
